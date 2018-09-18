@@ -1,0 +1,7 @@
+Reference
+=========
+
+.. toctree::
+    :glob:
+
+    pyres*
