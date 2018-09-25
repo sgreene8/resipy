@@ -50,7 +50,7 @@ def initialize_mt(unsigned int num_threads):
         ini_ptrs[i] = <unsigned long> mts
     return ini_ptrs
 
-def choose_doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs, 
+def doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs, 
                        unsigned char[:] orb_symm, unsigned char[:,:] lookup_tabl,
                        unsigned long[:] num_sampl, unsigned long[:] mt_ptrs):
     ''' Uniformly chooses num_sampl[i] double excitations for each determinant 
@@ -168,7 +168,7 @@ def choose_doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs,
 
 
 
-def choose_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs,
+def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
                    unsigned char[:] orb_symm, unsigned char[:, :] lookup_tabl,
                    unsigned long[:] num_sampl, unsigned long[:] mt_ptrs):
     ''' Uniformly chooses num_sampl[i] single excitations for each determinant

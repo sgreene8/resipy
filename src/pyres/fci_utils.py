@@ -9,37 +9,11 @@ spin-up orbitals, and the leftmost M to spin-down.
 """
 
 import numpy
-
-def unpack_bits(myarray, size):
-    """A subroutine that does the same thing as numpy.unpackbits, except
-        integer data types bigger than uint8 are allowed.
-
-        Parameters
-        ----------
-        myarray : (numpy.ndarray, int)
-            Array of integers to be unpacked
-        size : (int)
-            the size of each integer in bytes
-
-        Returns
-        -------
-        (numpy.ndarray, int)
-            a matrix whose row indices correspond to indices in myarray and
-            whose column indices correspond to bit positions
-    """
-
-    myarray.shape = (-1, 1)
-    shifts = numpy.linspace(size - 1, 0, num=size, dtype=numpy.uint) * 8
-    shifts.shape = (1, size)
-    intparts = myarray >> shifts
-    intparts = intparts.astype('uint8')
-    ints_bits = numpy.unpackbits(intparts, axis=1)
-    myarray.shape = (-1)
-    return ints_bits
+import fci_c_utils
 
 
 def excite_signs(cre_ops, des_ops, bit_strings, num_orb):
-    """Calculate the signs of single excitations for an array of bit strings,
+    """Calculate the parities of single excitations for an array of bit strings,
         i.e. determine the sign of cre_ops^+ des_ops |bitstrings>. Same as the
         pyscf subroutine pyscf.fci.cistring.cre_des_sign, except can operate on
         numpy vectors.
@@ -55,18 +29,32 @@ def excite_signs(cre_ops, des_ops, bit_strings, num_orb):
 
         Returns
         -------
-        (numpy.ndarray, int)
+        (numpy.ndarray, int8)
             signs of excitations, +1 or -1
     """
 
     credes_max = numpy.maximum(cre_ops, des_ops)
     credes_min = numpy.minimum(cre_ops, des_ops)
     mask = (1 << credes_max) - (1 << (credes_min + 1))
-
-    # Count number of ones in each element of mask
-    num_uints = numpy.ceil(num_orb / 8.).astype(int)
-    mask_bits = unpack_bits(mask & bit_strings, num_uints)
-    num_jump = numpy.sum(mask_bits, axis=1, dtype=int)
+    
+    # number of 1's in a binary representation of each number 0-15
+    byte_counts = numpy.array([0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4],
+                              dtype=numpy.int8)
+    # the number of half-bytes (4 bits) encoded in each bit string
+    num_hexa = numpy.ceil(num_orb / 4)
+    num_hexa = num_hexa.astype(int)
+    
+    mask &= bit_strings
+    
+    # divide mask into 4-bit units
+    mask.shape = (-1, 1)
+    shifts = 4 * numpy.arange(num_hexa)
+    mask_split = mask >> shifts
+    mask_split &= 15
+    
+    # count number of 1's in each 4-bit unit
+    num_jump = byte_counts[mask_split]
+    num_jump = num_jump.sum(axis=1)
 
     return (-1) ** num_jump
 
@@ -171,13 +159,14 @@ def doub_dets_parity(dets, chosen_idx):
         (numpy.ndarray, int)
             resulting parities (+/-1)
     """
-    
-    excited_dets = cyth_helpers2.toggle_bit(dets, chosen_idx[:, 0])
-    excited_dets = cyth_helpers2.toggle_bit(excited_dets, chosen_idx[:, 1])
-    signs = cyth_helpers2.excite_signs(chosen_idx[:, 2], chosen_idx[:, 0], excited_dets)
-    signs *= cyth_helpers2.excite_signs(chosen_idx[:, 3], chosen_idx[:, 1], excited_dets)
-    excited_dets = cyth_helpers2.toggle_bit(excited_dets, chosen_idx[:, 2])
-    excited_dets = cyth_helpers2.toggle_bit(excited_dets, chosen_idx[:, 3])
+
+    one = numpy.ones(1, dtype=numpy.int64)
+    excited_dets = dets ^ (one << chosen_idx[:, 0])
+    excited_dets ^= (one << chosen_idx[:, 1])
+    signs = excite_signs(chosen_idx[:, 2], chosen_idx[:, 0], excited_dets)
+    signs *= excite_signs(chosen_idx[:, 3], chosen_idx[:, 1], excited_dets)
+    excited_dets ^= (one << chosen_idx[:, 2])
+    excited_dets ^= (one << chosen_idx[:, 3])
     return excited_dets, signs
 
 
@@ -233,7 +222,7 @@ def count_doubex(occ_orbs, orb_symm, lookup_tabl):
         Returns
         -------
         (int) :
-            number of allowed single excitations
+            number of allowed double excitations
     """
 
     num_orb = orb_symm.shape[0]
@@ -262,3 +251,66 @@ def count_doubex(occ_orbs, orb_symm, lookup_tabl):
                 u2_poss = unocc_sym_counts[occ2_spin, j ^ symm_prod] - same_symm
                 num_ex += u1_poss * u2_poss / (1. + (occ1_spin == occ2_spin))
     return num_ex
+
+
+def gen_hf_bitstring(n_orb, n_elec):
+    """Generate the bit string representation of the Hartree-Fock determinant.
+    
+        Parameters
+        ----------
+        n_orb : (unsigned int)
+            the number of spatial orbitals in the basis
+        n_elec : (unsigned int)
+            the number of electrons in the system
+        
+        Returns
+        -------
+        (int64) :
+            bit string representation of the determinant    
+    """
+    
+    ones = 2**(n_elec / 2) - 1
+    hf_state = ones << n_orb
+    hf_state |= ones
+    return hf_state
+
+
+def gen_hf_ex(hf_det, hf_occ, n_orb, orb_symm, eris, n_frozen):
+    """Generate all symmetry-allowed double excitations from the Hartree-Fock determinant.
+
+        Parameters
+        ----------
+        hf_det : (int64)
+            bit-string representation of the HF determinant
+        hf_occ : (numpy.ndarray, uint8)
+            orbitals occupied in the HF determinant
+        n_orb : (unsigned int)
+            number of spatial orbitals in the basis
+        orb_symm : (numpy.ndarray, unsigned int)
+            symmetry of each spatial orbital in the basis
+        eris : (numpy.ndarray, float)
+            4-D array of 2-electron integrals in spatial MO basis
+        n_frozen : (unsigned int)
+            number of core electrons frozen in the calculation
+
+        Returns
+        -------
+        (numpy.ndarray, int64) :
+            bit string representations of excited determinants
+        (numpy.ndarray, float64) :
+            FCI matrix elements for excited determinants
+    """
+
+    det_arr = numpy.array([hf_det], numpy.int64)
+    occ_arr = hf_occ.copy()
+    occ_arr.shape = (1, -1)
+    ex_orbs = fci_c_utils.all_doub_ex(det_arr, occ_arr, n_orb)
+    symm_allow = ((orb_symm[ex_orbs[:, 0] % n_orb] ^ orb_symm[ex_orbs[:, 1] % n_orb]) ==
+                  (orb_symm[ex_orbs[:, 2] % n_orb] ^ orb_symm[ex_orbs[:, 3] % n_orb]))
+    ex_orbs = ex_orbs[symm_allow]
+    matr_el = doub_matr_el_nosgn(ex_orbs, eris, n_frozen)
+    ex_dets, ex_signs = doub_dets_parity(det_arr, ex_orbs)
+    ex_dets = numpy.insert(ex_dets, 0, hf_det)
+    matr_el *= ex_signs
+    matr_el = numpy.insert(matr_el, 0, 0.)
+    return ex_dets, matr_el
