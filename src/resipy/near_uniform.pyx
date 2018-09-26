@@ -46,7 +46,7 @@ def initialize_mt(unsigned int num_threads):
     
     for i in range(num_threads):
         mts = get_mt_parameter_id_st(32, 521, i, 4172)
-        sgenrand_mt(1000 * i + 0 * time(NULL), mts)
+        sgenrand_mt(1000 * i + time(NULL), mts)
         ini_ptrs[i] = <unsigned long> mts
     return ini_ptrs
 

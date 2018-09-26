@@ -39,17 +39,17 @@ if 'TOXENV' in os.environ and 'SETUPPY_CFLAGS' in os.environ:
     os.environ['CFLAGS'] = os.environ['SETUPPY_CFLAGS']
 
 setup(
-    name='pyres',
+    name='resipy',
     version='0.1.0',
     license='MIT license',
-    description='AImplementations of randomized electronic structure methods.',
+    description='Implementations of randomized electronic structure methods in Python/.',
     long_description='%s\n%s' % (
         re.compile('^.. start-badges.*^.. end-badges', re.M | re.S).sub('', read('README.rst')),
         re.sub(':[a-z]+:`~?(.*?)`', r'``\1``', read('CHANGELOG.rst'))
     ),
     author='Samuel Greene',
     author_email='sgreene@uchicago.edu',
-    url='https://github.com/sgreene8/pyres',
+    url='https://github.com/sgreene8/resipy',
     packages=find_packages('src'),
     package_dir={'': 'src'},
     py_modules=[splitext(basename(path))[0] for path in glob('src/*.py')],
@@ -94,7 +94,7 @@ setup(
     ] if Cython else [],
     entry_points={
         'console_scripts': [
-            'pyres = pyres.cli:main',
+            'resipy = resipy.cli:main',
         ]
     },
     ext_modules=[

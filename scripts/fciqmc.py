@@ -46,7 +46,6 @@ def main():
         p_doub = n_doub_ref * 1.0 / (n_sing_ref + n_doub_ref)
 
     rngen_ptrs = near_uniform.initialize_mt(args.procs)
-    numpy.random.seed(0)
 
     # Elements in the HF column of FCI matrix
     hf_col_dets, hf_col_matrel = fci_utils.gen_hf_ex(hf_det, occ_orbs[0], n_orb, symm, eris, args.frozen)

@@ -16,34 +16,34 @@ Overview
       - | |version| |wheel| |supported-versions| |supported-implementations|
         | |commits-since|
 
-.. |docs| image:: https://readthedocs.org/projects/pyres/badge/?style=flat
-    :target: https://readthedocs.org/projects/pyres
+.. |docs| image:: https://readthedocs.org/projects/resipy/badge/?style=flat
+    :target: https://readthedocs.org/projects/resipy
     :alt: Documentation Status
 
-.. |version| image:: https://img.shields.io/pypi/v/pyres.svg
+.. |version| image:: https://img.shields.io/pypi/v/resipy.svg
     :alt: PyPI Package latest release
-    :target: https://pypi.python.org/pypi/pyres
+    :target: https://pypi.python.org/pypi/resipy
 
-.. |commits-since| image:: https://img.shields.io/github/commits-since/sgreene8/pyres/v0.1.0.svg
+.. |commits-since| image:: https://img.shields.io/github/commits-since/sgreene8/resipy/v0.1.0.svg
     :alt: Commits since latest release
-    :target: https://github.com/sgreene8/pyres/compare/v0.1.0...master
+    :target: https://github.com/sgreene8/resipy/compare/v0.1.0...master
 
-.. |wheel| image:: https://img.shields.io/pypi/wheel/pyres.svg
+.. |wheel| image:: https://img.shields.io/pypi/wheel/resipy.svg
     :alt: PyPI Wheel
-    :target: https://pypi.python.org/pypi/pyres
+    :target: https://pypi.python.org/pypi/resipy
 
-.. |supported-versions| image:: https://img.shields.io/pypi/pyversions/pyres.svg
+.. |supported-versions| image:: https://img.shields.io/pypi/pyversions/resipy.svg
     :alt: Supported versions
-    :target: https://pypi.python.org/pypi/pyres
+    :target: https://pypi.python.org/pypi/resipy
 
-.. |supported-implementations| image:: https://img.shields.io/pypi/implementation/pyres.svg
+.. |supported-implementations| image:: https://img.shields.io/pypi/implementation/resipy.svg
     :alt: Supported implementations
-    :target: https://pypi.python.org/pypi/pyres
+    :target: https://pypi.python.org/pypi/resipy
 
 
 .. end-badges
 
-AImplementations of randomized electronic structure methods.
+Implementations of randomized electronic structure methods in Python.
 
 * Free software: MIT license
 
@@ -52,12 +52,12 @@ Installation
 
 ::
 
-    pip install pyres
+    pip install resipy
 
 Documentation
 =============
 
-https://pyres.readthedocs.io/
+https://resipy.readthedocs.io/
 
 Development
 ===========

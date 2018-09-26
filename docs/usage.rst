@@ -2,6 +2,6 @@
 Usage
 =====
 
-To use Python -based Randomized Electronic Structure methods in a project::
+To use RESiPy in a project::
 
-	import pyres
+	import resipy

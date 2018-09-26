@@ -1,6 +1,6 @@
 
-from pyres import longest
-from pyres.cli import main
+from resipy import longest
+from resipy.cli import main
 
 
 def test_main():
