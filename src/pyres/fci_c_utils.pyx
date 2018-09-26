@@ -63,7 +63,7 @@ def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec
     return occ_orbs
 
 
-def ind_from_count(unsigned long[:] counts):
+def ind_from_count(unsigned int[:] counts):
     """Returns a vector of indices 0, 1, 2, ... in order, each repeated a number
     of times as specified in the counts argument.
 
@@ -277,7 +277,7 @@ cdef void _sing_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
                 res_arr[idx + 1] = j
                 idx += 2
     for i in range(num_elec / 2, num_elec):
-        i_orb = occ_orbs[i] + num_orb
+        i_orb = occ_orbs[i]
         for j in range(num_orb, 2 * num_orb):
             if not(det & <long long> 1 << j):
                 res_arr[idx] = i_orb
@@ -330,7 +330,7 @@ cdef void _doub_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
     for i in range(num_elec / 2):
         i_orb = occ_orbs[i]
         for j in range(num_elec / 2, num_elec):
-            j_orb = occ_orbs[j] + num_orb
+            j_orb = occ_orbs[j]
             for k in range(num_orb):
                 if not(det & (<long long> 1 << k)):
                     for l in range(num_orb, 2 * num_orb):
@@ -356,9 +356,9 @@ cdef void _doub_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
                             idx += 4
     # Same-spin (down) excitations
     for i in range(num_elec / 2, num_elec):
-        i_orb = occ_orbs[i] + num_orb
+        i_orb = occ_orbs[i]
         for j in range(i + 1, num_elec):
-            j_orb = occ_orbs[j] + num_orb
+            j_orb = occ_orbs[j]
             for k in range(num_orb, 2 * num_orb):
                 if not(det & (<long long> 1 << k)):
                     for l in range(k + 1, 2 * num_orb):

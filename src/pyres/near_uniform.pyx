@@ -46,13 +46,13 @@ def initialize_mt(unsigned int num_threads):
     
     for i in range(num_threads):
         mts = get_mt_parameter_id_st(32, 521, i, 4172)
-        sgenrand_mt(1000 * i + time(NULL), mts)
+        sgenrand_mt(1000 * i + 0 * time(NULL), mts)
         ini_ptrs[i] = <unsigned long> mts
     return ini_ptrs
 
 def doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs, 
                        unsigned char[:] orb_symm, unsigned char[:,:] lookup_tabl,
-                       unsigned long[:] num_sampl, unsigned long[:] mt_ptrs):
+                       unsigned int[:] num_sampl, unsigned long[:] mt_ptrs):
     ''' Uniformly chooses num_sampl[i] double excitations for each determinant 
         dets[i] according to the symmetry-adapted rules described in Sec. 5.2
         of Booth et al. (2014) using independent multinomial sampling.
@@ -69,7 +69,7 @@ def doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs,
         lookup_tabl : (numpy.ndarray, uint8)
             Table of orbitals with each type of symmetry, as generated
             by fci_helpers2.gen_byte_table()
-        num_sampl : (numpy.ndarray, uint64)
+        num_sampl : (numpy.ndarray, uint32)
             number of double excitations to choose for each determinant
         mt_ptrs : (numpy.ndarray, uint64)
             List of addresses to MT state objects to use for RN generation
@@ -83,7 +83,7 @@ def doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs,
             probability of each choice
     '''
 
-    cdef unsigned long num_dets = dets.shape[0]
+    cdef unsigned int num_dets = dets.shape[0]
     cdef unsigned int num_elec = occ_orbs.shape[1]
     cdef unsigned int num_orb = orb_symm.shape[0]
     cdef unsigned int i, det_idx
@@ -91,7 +91,7 @@ def doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs,
     cdef unsigned int unocc1, unocc2, m_a_allow, m_a_b_allow, m_b_a_allow
     cdef orb_pair occ
     cdef long long curr_det
-    cdef unsigned long tot_sampl = 0
+    cdef unsigned int tot_sampl = 0
     cdef double prob
     cdef numpy.ndarray[numpy.uint32_t] start_idx = numpy.zeros(num_dets, dtype=numpy.uint32)
     cdef unsigned int thread_idx, n_threads = mt_ptrs.shape[0]
@@ -170,7 +170,7 @@ def doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs,
 
 def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
                    unsigned char[:] orb_symm, unsigned char[:, :] lookup_tabl,
-                   unsigned long[:] num_sampl, unsigned long[:] mt_ptrs):
+                   unsigned int[:] num_sampl, unsigned long[:] mt_ptrs):
     ''' Uniformly chooses num_sampl[i] single excitations for each determinant
         dets[i] according to the symmetry-adapted rules described in Sec. 5.1 of
         Booth et al. (2014).
@@ -200,13 +200,13 @@ def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
             probability of each choice
     '''
     
-    cdef unsigned long num_dets = occ_orbs.shape[0]
+    cdef unsigned int num_dets = occ_orbs.shape[0]
     cdef unsigned int num_elec = occ_orbs.shape[1]
     cdef unsigned int num_orb = orb_symm.shape[0]
     cdef unsigned int j, delta_s, num_allowed, det_idx
     cdef unsigned int occ_orb, occ_symm, occ_spin, virt_orb, sampl_idx
     cdef unsigned int elec_idx
-    cdef unsigned long tot_sampl = 0
+    cdef unsigned int tot_sampl = 0
     cdef long long curr_det
     cdef numpy.ndarray[numpy.uint32_t] start_idx = numpy.zeros(num_dets, dtype=numpy.uint32)
     cdef unsigned int thread_idx

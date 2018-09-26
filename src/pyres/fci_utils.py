@@ -12,7 +12,7 @@ import numpy
 import fci_c_utils
 
 
-def excite_signs(cre_ops, des_ops, bit_strings, num_orb):
+def excite_signs(cre_ops, des_ops, bit_strings):
     """Calculate the parities of single excitations for an array of bit strings,
         i.e. determine the sign of cre_ops^+ des_ops |bitstrings>. Same as the
         pyscf subroutine pyscf.fci.cistring.cre_des_sign, except can operate on
@@ -24,8 +24,6 @@ def excite_signs(cre_ops, des_ops, bit_strings, num_orb):
             orbital indices of creation operators
         des_ops : (numpy.ndarray, unsigned int)
             orbital indices of destruction operators
-        num_orb : (int)
-            number of spin orbitals encoded by each bit string
 
         Returns
         -------
@@ -34,14 +32,19 @@ def excite_signs(cre_ops, des_ops, bit_strings, num_orb):
     """
 
     credes_max = numpy.maximum(cre_ops, des_ops)
+    if credes_max.shape[0] > 0:
+        max_orb = numpy.amax(credes_max)
+    else:
+        return numpy.array([], dtype=numpy.int32)
     credes_min = numpy.minimum(cre_ops, des_ops)
-    mask = (1 << credes_max) - (1 << (credes_min + 1))
+    one = numpy.array([1], dtype=numpy.int64)
+    mask = (one << credes_max) - (one << (credes_min + 1))
     
     # number of 1's in a binary representation of each number 0-15
     byte_counts = numpy.array([0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4],
                               dtype=numpy.int8)
     # the number of half-bytes (4 bits) encoded in each bit string
-    num_hexa = numpy.ceil(num_orb / 4)
+    num_hexa = numpy.ceil(max_orb / 4.)
     num_hexa = num_hexa.astype(int)
     
     mask &= bit_strings
@@ -250,7 +253,7 @@ def count_doubex(occ_orbs, orb_symm, lookup_tabl):
                 # symm_prod
                 u2_poss = unocc_sym_counts[occ2_spin, j ^ symm_prod] - same_symm
                 num_ex += u1_poss * u2_poss / (1. + (occ1_spin == occ2_spin))
-    return num_ex
+    return (int)(num_ex)
 
 
 def gen_hf_bitstring(n_orb, n_elec):
@@ -310,7 +313,10 @@ def gen_hf_ex(hf_det, hf_occ, n_orb, orb_symm, eris, n_frozen):
     ex_orbs = ex_orbs[symm_allow]
     matr_el = doub_matr_el_nosgn(ex_orbs, eris, n_frozen)
     ex_dets, ex_signs = doub_dets_parity(det_arr, ex_orbs)
-    ex_dets = numpy.insert(ex_dets, 0, hf_det)
     matr_el *= ex_signs
+    srt_idx = numpy.argsort(ex_dets)
+    ex_dets = ex_dets[srt_idx]
+    matr_el = matr_el[srt_idx]
+    ex_dets = numpy.insert(ex_dets, 0, hf_det)
     matr_el = numpy.insert(matr_el, 0, 0.)
     return ex_dets, matr_el

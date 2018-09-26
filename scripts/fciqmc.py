@@ -29,7 +29,7 @@ def main():
     # Initialize solution vector
     sol_dets = numpy.array([hf_det], dtype=numpy.int64)
     sol_vals = numpy.array([args.walkers], dtype=numpy.int32)
-    occ_orbs = fci_c_utils.gen_orb_lists(sol_dets, n_orb, args.n_elec -
+    occ_orbs = fci_c_utils.gen_orb_lists(sol_dets, 2 * n_orb, args.n_elec -
                                          args.frozen, byte_nums, byte_idx)
     n_walk = numpy.sum(numpy.abs(sol_vals))  # one-norm of solution vector
     last_nwalk = 0  # number of walkers at the time of previous shift update
@@ -46,9 +46,10 @@ def main():
         p_doub = n_doub_ref * 1.0 / (n_sing_ref + n_doub_ref)
 
     rngen_ptrs = near_uniform.initialize_mt(args.procs)
+    numpy.random.seed(0)
 
     # Elements in the HF column of FCI matrix
-    hf_col_dets, hf_col_matrel = fci_c_utils.gen_hf_ex(hf_det, occ_orbs[0], n_orb, symm, eris, args.frozen)
+    hf_col_dets, hf_col_matrel = fci_utils.gen_hf_ex(hf_det, occ_orbs[0], n_orb, symm, eris, args.frozen)
 
     for iterat in range(args.max_iter):
         # number of samples to draw from each column
@@ -103,19 +104,20 @@ def main():
         diag_matrel = compress_utils.round_binomially(diag_matrel, n_col)
         # Retain nonzero elements
         diag_nonz = diag_matrel != 0
-        diag_matrel = diag_matrel[diag_nonz]
         next_dets = sol_dets[diag_nonz]
-        next_vals = sol_vals[diag_nonz]
+        next_vals = diag_matrel[diag_nonz]
 
         # Add vectors in sparse format
-        next_dets, next_vals = sparse_utils.merge_sparse_vectors(next_dets, spawn_dets, next_vals, spawn_vals,
-                                                                 sorted=True)
-        occ_orbs = fci_c_utils.gen_orb_lists(sol_dets, n_orb, args.n_elec -
+        next_dets, next_vals = sparse_utils.add_vectors(next_dets, spawn_dets, next_vals, spawn_vals,
+                                                                 sorted1=True)
+        occ_orbs = fci_c_utils.gen_orb_lists(next_dets, 2 * n_orb, args.n_elec -
                                              args.frozen, byte_nums, byte_idx)
-        n_walk = numpy.sum(numpy.abs(sol_vals))
-        en_shift, last_nwalk = adjust_shift(en_shift, n_walk, last_nwalk)
-        io_utils.calc_results(results, next_dets, next_vals,
-                              en_shift, iterat, hf_col_dets, hf_col_matrel)
+        n_walk = numpy.sum(numpy.abs(next_vals))
+        en_shift, last_nwalk = adjust_shift(en_shift, n_walk, last_nwalk, args.walker_target, args.damping)
+        io_utils.calc_results(results, next_dets, next_vals, en_shift, iterat,
+                              hf_col_dets, hf_col_matrel)
+        sol_dets = next_dets
+        sol_vals = next_vals
 
 
 def adjust_shift(shift, n_walkers, last_walkers, target_walkers, damp_factor):
@@ -123,12 +125,11 @@ def adjust_shift(shift, n_walkers, last_walkers, target_walkers, damp_factor):
     Adjust the constant energy shift used to control normalization
     """
     if last_walkers:
-        new_shift = shift - damp_factor * \
-            numpy.log(float(n_walkers) / last_walkers)
-        new_last = n_walkers
+        shift -= damp_factor * numpy.log(float(n_walkers) / last_walkers)
+        last_walkers = n_walkers
     if not(last_walkers) and n_walkers > target_walkers:
-        new_last = n_walkers
-    return new_shift, new_last
+        last_walkers = n_walkers
+    return shift, last_walkers
 
 
 def _sample_singles(vec_dets, vec_occ, orb_symm, symm_lookup, n_col, rn_vec):
@@ -231,7 +232,7 @@ def _parse_args():
         args.hf_path += '/'
 
     if args.result_dir[-1] != '/':
-        args.hf_path += '/'
+        args.result_dir += '/'
 
     if args.n_elec <= 0:
         raise ValueError(
