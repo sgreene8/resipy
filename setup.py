@@ -107,7 +107,7 @@ setup(
             libraries=["m", "dcmt"],
             extra_compile_args = ["-O3", "-ffast-math", "-march=native", "-fopenmp" ],
             extra_link_args=['-fopenmp'],
-            library_dirs = ["lib"]
+            library_dirs = ["dcmt"]
         )
         for root, _, _ in os.walk('src')
         for path in glob(join(root, '*.pyx' if Cython else '*.c'))
