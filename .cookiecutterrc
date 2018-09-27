@@ -37,7 +37,7 @@ default_context:
     linter:                    'flake8'
     package_name:              'resipy'
     project_name:              'RESiPy'
-    project_short_description: 'Implementations of randomized electronic structure methods in Python/.'
+    project_short_description: 'Randomized Electronic Structure in Python.'
     release_date:              'today'
     repo_name:                 'resipy'
     requiresio:                'no'

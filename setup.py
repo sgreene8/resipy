@@ -17,6 +17,8 @@ from setuptools import Extension
 from setuptools import find_packages
 from setuptools import setup
 
+import numpy
+
 try:
     # Allow installing package without any Cython available. This
     # assumes you are going to include the .c files in your sdist.
@@ -42,7 +44,7 @@ setup(
     name='resipy',
     version='0.1.0',
     license='MIT license',
-    description='Implementations of randomized electronic structure methods in Python/.',
+    description='Randomized Electronic Structure in Python.',
     long_description='%s\n%s' % (
         re.compile('^.. start-badges.*^.. end-badges', re.M | re.S).sub('', read('README.rst')),
         re.sub(':[a-z]+:`~?(.*?)`', r'``\1``', read('CHANGELOG.rst'))
@@ -101,7 +103,11 @@ setup(
         Extension(
             splitext(relpath(path, 'src').replace(os.sep, '.'))[0],
             sources=[path],
-            include_dirs=[dirname(path)]
+            include_dirs=[dirname(path), numpy.get_include(), 'lib'],
+            libraries=["m", "dcmt"],
+            extra_compile_args = ["-O3", "-ffast-math", "-march=native", "-fopenmp" ],
+            extra_link_args=['-fopenmp'],
+            library_dirs = ["lib"]
         )
         for root, _, _ in os.walk('src')
         for path in glob(join(root, '*.pyx' if Cython else '*.c'))

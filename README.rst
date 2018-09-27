@@ -43,7 +43,7 @@ Overview
 
 .. end-badges
 
-Implementations of randomized electronic structure methods in Python.
+Randomized Electronic Structure in Python.
 
 * Free software: MIT license
 

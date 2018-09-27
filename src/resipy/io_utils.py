@@ -95,7 +95,7 @@ def calc_results(r_dict, vec_dets, vec_vals, shift, iter_num, hf_dets, hf_matrel
     if 'sparsity' in r_dict:
         r_dict['sparsity'][1][res_idx / shift_int] = vec_dets.shape[0]
 
-    if (iter_num + 1) % buf_len:
+    if ((iter_num + 1) % buf_len) == 0:
         numpy.savetxt(r_dict['proj_num'][0], r_dict['proj_num'][1])
         numpy.savetxt(r_dict['proj_den'][0], r_dict['proj_den'][1])
         numpy.save(r_dict['dets_file'], vec_dets)

@@ -6,12 +6,12 @@ For help, run  python fciqmc.py -h
 
 import numpy
 import argparse
-from pyres import fci_utils
-from pyres import fci_c_utils
-from pyres import sparse_utils
-from pyres import near_uniform
-from pyres import compress_utils
-from pyres import io_utils
+from resipy import fci_utils
+from resipy import fci_c_utils
+from resipy import sparse_utils
+from resipy import near_uniform
+from resipy import compress_utils
+from resipy import io_utils
 
 
 def main():
