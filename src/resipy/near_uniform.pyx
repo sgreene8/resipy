@@ -107,7 +107,7 @@ def doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs,
                                                                           dtype=numpy.uint8)
     cdef numpy.ndarray[numpy.float64_t] prob_vec = numpy.zeros(tot_sampl)
 
-    for det_idx in prange(num_dets, nogil=True, schedule=dynamic, num_threads=n_threads):
+    for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
         if (num_sampl[det_idx] == 0):
             continue
         tot_sampl = start_idx[det_idx]

@@ -6,7 +6,7 @@ import numpy
 import sparse_utils
 
 
-def setup_results(buf_len, res_dir, calc_ray, fciqmc, shift_int):
+def setup_results(buf_len, res_dir, calc_ray, fciqmc, shift_int=0):
     """Initialize the file handles for writing results and their corresponding
         buffer arrays.
 

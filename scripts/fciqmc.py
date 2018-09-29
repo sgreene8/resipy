@@ -13,7 +13,6 @@ from resipy import near_uniform
 from resipy import compress_utils
 from resipy import io_utils
 
-
 def main():
     args = _parse_args()
 
@@ -112,7 +111,7 @@ def main():
         occ_orbs = fci_c_utils.gen_orb_lists(next_dets, 2 * n_orb, args.n_elec -
                                              args.frozen, byte_nums, byte_idx)
         n_walk = numpy.sum(numpy.abs(next_vals))
-        en_shift, last_nwalk = adjust_shift(en_shift, n_walk, last_nwalk, args.walker_target, args.damping)
+        en_shift, last_nwalk = adjust_shift(en_shift, n_walk, last_nwalk, args.walker_target, args.damping / args.interval / args.epsilon)
         io_utils.calc_results(results, next_dets, next_vals, en_shift, iterat,
                               hf_col_dets, hf_col_matrel)
         sol_dets = next_dets

@@ -103,7 +103,7 @@ setup(
         Extension(
             splitext(relpath(path, 'src').replace(os.sep, '.'))[0],
             sources=[path],
-            include_dirs=[dirname(path), numpy.get_include(), 'lib'],
+            include_dirs=[dirname(path), numpy.get_include(), 'dcmt'],
             libraries=["m", "dcmt"],
             extra_compile_args = ["-O3", "-ffast-math", "-march=native", "-fopenmp" ],
             extra_link_args=['-fopenmp'],
