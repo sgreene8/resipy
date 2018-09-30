@@ -76,7 +76,6 @@ def calc_results(r_dict, vec_dets, vec_vals, shift, iter_num, hf_dets, hf_matrel
             to hf_dets
     """
     buf_len = r_dict['buf_len']
-    shift_int = r_dict['shift_int']
     res_idx = iter_num % buf_len
     if vec_dets[0] != hf_dets[0]:
         r_dict['proj_den'][1][res_idx] = 0
@@ -88,6 +87,7 @@ def calc_results(r_dict, vec_dets, vec_vals, shift, iter_num, hf_dets, hf_matrel
           [res_idx] / r_dict['proj_den'][1][res_idx])
 
     if 'shift' in r_dict:
+        shift_int = r_dict['shift_int']
         r_dict['shift'][1][res_idx / shift_int] = shift
     if 'n_walk' in r_dict:
         r_dict['n_walk'][1][res_idx /

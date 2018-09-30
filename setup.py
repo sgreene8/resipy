@@ -20,8 +20,7 @@ from setuptools import setup
 import numpy
 
 try:
-    # Allow installing package without any Cython available. This
-    # assumes you are going to include the .c files in your sdist.
+    # Allow installing package without any Cython available.
     import Cython
 except ImportError:
     Cython = None

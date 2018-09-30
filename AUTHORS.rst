@@ -2,4 +2,7 @@
 Authors
 =======
 
-* Samuel Greene - http://berkelbachgroup.uchicago.edu
+* Samuel Greene (sgreene@uchicago.edu)
+* Timothy Berkelbach
+* Jonathan Weare
+* Robert Webber
