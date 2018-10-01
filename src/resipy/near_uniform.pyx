@@ -54,12 +54,12 @@ def initialize_mt(unsigned int num_threads):
 def bin_n_sing_doub(col_nsamp, p_doub):
     """Binomially partition the samples for each column into single and double excitations.
 
-        Parameters
-        ----------
-        col_nsamp : (numpy.ndarray, uint32)
-            Number of off-diagonal elements to choose from each column
-        p_doub : (float)
-            Probability of choosing a double, instead of a single excitation
+    Parameters
+    ----------
+    col_nsamp : (numpy.ndarray, uint32)
+        Number of off-diagonal elements to choose from each column
+    p_doub : (float)
+        Probability of choosing a double, instead of a single excitation
     """ 
 
     doub_samp = numpy.random.binomial(col_nsamp, p_doub)
@@ -76,30 +76,30 @@ def doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs,
         dets[i] according to the symmetry-adapted rules described in Sec. 5.2
         of Booth et al. (2014) using independent multinomial sampling.
 
-        Parameters
-        ----------
-        dets : (numpy.ndarray, int64)
-            Bit string representations of all determinants
-        occ_orbs : (numpy.ndarray, uint8)
-            The numbers in each row correspond to the indices of occupied
-            orbitals in each determinant, calculated from gen_orb_lists.
-        orb_symm : (numpy.ndarray, unit8)
-            irreducible representation of each spatial orbital
-        lookup_tabl : (numpy.ndarray, uint8)
-            Table of orbitals with each type of symmetry, as generated
-            by fci_helpers2.gen_byte_table()
-        num_sampl : (numpy.ndarray, uint32)
-            number of double excitations to choose for each determinant
-        mt_ptrs : (numpy.ndarray, uint64)
-            List of addresses to MT state objects to use for RN generation
+    Parameters
+    ----------
+    dets : (numpy.ndarray, int64)
+        Bit string representations of all determinants
+    occ_orbs : (numpy.ndarray, uint8)
+        The numbers in each row correspond to the indices of occupied
+        orbitals in each determinant, calculated from gen_orb_lists.
+    orb_symm : (numpy.ndarray, unit8)
+        irreducible representation of each spatial orbital
+    lookup_tabl : (numpy.ndarray, uint8)
+        Table of orbitals with each type of symmetry, as generated
+        by fci_helpers2.gen_byte_table()
+    num_sampl : (numpy.ndarray, uint32)
+        number of double excitations to choose for each determinant
+    mt_ptrs : (numpy.ndarray, uint64)
+        List of addresses to MT state objects to use for RN generation
 
-        Returns
-        -------
-        (numpy.ndarray, uint8) :
-            chosen occupied (0th and 1st columns) and unoccupied (2nd and 3rd
-            columns) orbitals
-        (numpy.ndarray, float64) :
-            probability of each choice
+    Returns
+    -------
+    (numpy.ndarray, uint8) :
+        chosen occupied (0th and 1st columns) and unoccupied (2nd and 3rd
+        columns) orbitals
+    (numpy.ndarray, float64) :
+        probability of each choice
     '''
 
     cdef unsigned int num_dets = dets.shape[0]
@@ -200,31 +200,31 @@ def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
         dets[i] according to the symmetry-adapted rules described in Sec. 5.1 of
         Booth et al. (2014).
 
-        Parameters
-        ----------
-        dets : (numpy.ndarray, int64)
-            Bit string representations of all determinants
-        occ_orbs : (numpy.ndarray, uint8)
-            The numbers in each row correspond to the indices of occupied
-            orbitals in each determinant, calculated from gen_orb_lists.
-        orb_symm : (numpy.ndarray, unit8)
-            irreducible representation of each spatial orbital
-        lookup_tabl : (numpy.ndarray, uint8)
-            Table of orbitals with each type of symmetry, as generated
-            by fci_helpers2.gen_byte_table()
-        num_sampl : (numpy.ndarray, uint64)
-            number of single excitations to choose for each determinant
-        mt_ptrs : (numpy.ndarray, uint64)
-            List of addresses to MT state objects to use for RN generation
+    Parameters
+    ----------
+    dets : (numpy.ndarray, int64)
+        Bit string representations of all determinants
+    occ_orbs : (numpy.ndarray, uint8)
+        The numbers in each row correspond to the indices of occupied
+        orbitals in each determinant, calculated from gen_orb_lists.
+    orb_symm : (numpy.ndarray, unit8)
+        irreducible representation of each spatial orbital
+    lookup_tabl : (numpy.ndarray, uint8)
+        Table of orbitals with each type of symmetry, as generated
+        by fci_helpers2.gen_byte_table()
+    num_sampl : (numpy.ndarray, uint64)
+        number of single excitations to choose for each determinant
+    mt_ptrs : (numpy.ndarray, uint64)
+        List of addresses to MT state objects to use for RN generation
 
-        Returns
-        -------
-        (numpy.ndarray, uint8) :
-            chosen occupied (0th column) and unoccupied (1st column) orbitals
-        (numpy.ndarray, float64) :
-            probability of each choice
-        (numpy.ndarray, uint32) :
-            index of origin determinant of each choice in the dets array
+    Returns
+    -------
+    (numpy.ndarray, uint8) :
+        chosen occupied (0th column) and unoccupied (1st column) orbitals
+    (numpy.ndarray, float64) :
+        probability of each choice
+    (numpy.ndarray, uint32) :
+        index of origin determinant of each choice in the dets array
     '''
     
     cdef unsigned int num_dets = occ_orbs.shape[0]

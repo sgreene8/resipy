@@ -104,8 +104,7 @@ def compress_sparse_vector(vec_idx, vec_vals, m_nonzero, take_abs=True):
             is allowed, with each row denoting a multi-index. It is assumed
             that there are no duplicate rows in vec_idx.
         vec_vals : (numpy.ndarray, float)
-            the values of nonzero elements in the input vector. vec_vals is
-            MODIFIED inside this function.
+            the values of nonzero elements in the input vector
         m_nonzero : (unsigned int)
             the desired number of nonzero elements in the output vector
         take_abs : (bool)
@@ -128,34 +127,30 @@ def compress_sparse_vector(vec_idx, vec_vals, m_nonzero, take_abs=True):
     if take_abs:
         vec_abs = numpy.abs(vec_vals)
     else:
-        vec_abs = vec_vals
+        vec_abs = numpy.copy(vec_vals)
 
-    idx_shape = vec_idx.shape
-    # Allocate arrays for indices and elements of the output vector
-    if len(idx_shape) == 1:
-        out_idx = numpy.zeros(num_to_sample, dtype=int)
-    else:
-        out_idx = numpy.zeros([num_to_sample, idx_shape[1]], dtype=int)
-    out_vals = numpy.zeros(num_to_sample)
+    preserve_idx = numpy.zeros(initial_n, dtype=bool)
 
     big_idx = _get_largest_idx(vec_abs, num_to_sample)
     tau = big_idx.shape[0]
 
-    out_idx[:tau] = vec_idx[big_idx]
-    out_vals[:tau] = vec_vals[big_idx]
+    preserve_idx[big_idx] = True
 
     vec_abs[big_idx] = 0
     vec_norm = vec_abs.sum()
     chosen_idx = sys_resample(vec_abs / vec_norm, num_to_sample - tau)
+    preserve_idx[chosen_idx] = True
     resamp_weight = vec_norm / (num_to_sample - tau)
 
-    if take_abs:
-        out_vals[tau:] = numpy.sign(vec_vals[chosen_idx]) * resamp_weight
-    else:
-        out_vals[tau:] = resamp_weight
-    out_idx[tau:] = vec_idx[chosen_idx]
+    out_idx = vec_idx[preserve_idx]
 
-    return out_idx, out_vals
+    vec_abs[big_idx] = vec_vals[big_idx]
+    if take_abs:
+        vec_abs[chosen_idx] = numpy.sign(vec_vals[chosen_idx]) * resamp_weight
+    else:
+        vec_abs[chosen_idx]
+
+    return out_idx, vec_abs[preserve_idx]
 
 
 def _get_largest_idx(vec_abs_el, n_sample):

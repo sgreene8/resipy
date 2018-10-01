@@ -8,10 +8,11 @@ import numpy
 import argparse
 from resipy import fci_utils
 from resipy import fci_c_utils
-from resipy import sparse_utils
+from resipy import sparse_vector
 from resipy import near_uniform
 from resipy import compress_utils
 from resipy import io_utils
+
 
 def main():
     args = _parse_args()
@@ -26,11 +27,13 @@ def main():
     hf_det = fci_utils.gen_hf_bitstring(n_orb, args.n_elec - args.frozen)
 
     # Initialize solution vector
-    sol_dets = numpy.array([hf_det], dtype=numpy.int64)
-    sol_vals = numpy.array([args.walkers], dtype=numpy.int32)
-    occ_orbs = fci_c_utils.gen_orb_lists(sol_dets, 2 * n_orb, args.n_elec -
+    ini_idx = numpy.array([hf_det], dtype=numpy.int64)
+    ini_val = numpy.array([args.walkers], dtype=numpy.int32)
+    sol_vec = sparse_vector.SparseVector(ini_idx, ini_val)
+    occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, 2 * n_orb, args.n_elec -
                                          args.frozen, byte_nums, byte_idx)
-    n_walk = numpy.sum(numpy.abs(sol_vals))  # one-norm of solution vector
+    # one-norm of solution vector
+    n_walk = sol_vec.one_norm()
     last_nwalk = 0  # number of walkers at the time of previous shift update
     # energy shift for controlling normalization
     en_shift = args.initial_shift
@@ -47,17 +50,19 @@ def main():
     rngen_ptrs = near_uniform.initialize_mt(args.procs)
 
     # Elements in the HF column of FCI matrix
-    hf_col_dets, hf_col_matrel = fci_utils.gen_hf_ex(hf_det, occ_orbs[0], n_orb, symm, eris, args.frozen)
+    hf_col = fci_utils.gen_hf_ex(
+        hf_det, occ_orbs[0], n_orb, symm, eris, args.frozen)
 
     for iterat in range(args.max_iter):
         # number of samples to draw from each column
-        n_col = numpy.abs(sol_vals)
+        n_col = numpy.abs(sol_vec.values)
 
         if args.prob_dist == "near_uniform":
-            n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(n_col, p_doub)
+            n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
+                n_col, p_doub)
             # Sample double excitations
             doub_orbs, doub_probs, doub_idx = near_uniform.doub_multin(
-                sol_dets, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
+                sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
             # Compress chosen elements
             doub_matrel = fci_utils.doub_matr_el_nosgn(
                 doub_orbs, eris, args.frozen)
@@ -70,16 +75,17 @@ def main():
             doub_matrel = doub_matrel[doub_nonz]
             # Calculate determinants and matrix elements
             doub_dets, doub_signs = fci_utils.doub_dets_parity(
-                sol_dets[doub_idx], doub_orbs)
-            doub_matrel *= doub_signs * -numpy.sign(sol_vals[doub_idx])
+                sol_vec.indices[doub_idx], doub_orbs)
+            doub_matrel *= doub_signs * -numpy.sign(sol_vec.values[doub_idx])
             # Start forming next iterate
             spawn_dets = doub_dets
             spawn_vals = doub_matrel
 
             # Sample single excitations
-            sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(sol_dets, occ_orbs, symm, symm_lookup,  n_sing_col, rngen_ptrs)
+            sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(
+                sol_vec.indices, occ_orbs, symm, symm_lookup,  n_sing_col, rngen_ptrs)
             sing_dets, sing_matrel = fci_c_utils.single_dets_matrel(
-                sol_dets[sing_idx], sing_orbs, eris, h_core, occ_orbs[sing_idx], args.frozen)
+                sol_vec.indices[sing_idx], sing_orbs, eris, h_core, occ_orbs[sing_idx], args.frozen)
             # Compress chosen elements
             sing_matrel *= args.epsilon / sing_probs / (1 - p_doub)
             sing_matrel = compress_utils.round_binomially(sing_matrel, 1)
@@ -89,7 +95,7 @@ def main():
             sing_dets = sing_dets[sing_nonz]
             sing_matrel = sing_matrel[sing_nonz]
             # Calculate determinants and matrix elements
-            sing_matrel *= -numpy.sign(sol_vals[sing_idx])
+            sing_matrel *= -numpy.sign(sol_vec.values[sing_idx])
             # Add to next iterate
             spawn_dets = numpy.append(spawn_dets, sing_dets)
             spawn_vals = numpy.append(spawn_vals, sing_matrel)
@@ -97,24 +103,22 @@ def main():
         diag_matrel = fci_c_utils.diag_matrel(
             occ_orbs, h_core, eris, args.frozen) - en_shift - hf_en
         diag_matrel = 1 - args.epsilon * diag_matrel
-        diag_matrel *= numpy.sign(sol_vals)
+        diag_matrel *= numpy.sign(sol_vec.values)
         diag_matrel = compress_utils.round_binomially(diag_matrel, n_col)
         # Retain nonzero elements
         diag_nonz = diag_matrel != 0
-        next_dets = sol_dets[diag_nonz]
-        next_vals = diag_matrel[diag_nonz]
+        next_vec = sparse_vector.SparseVector(
+            sol_vec.indices[diag_nonz], diag_matrel[diag_nonz])
 
         # Add vectors in sparse format
-        next_dets, next_vals = sparse_utils.add_vectors(next_dets, spawn_dets, next_vals, spawn_vals,
-                                                                 sorted1=True)
-        occ_orbs = fci_c_utils.gen_orb_lists(next_dets, 2 * n_orb, args.n_elec -
+        next_vec.add(spawn_dets, spawn_vals)
+        occ_orbs = fci_c_utils.gen_orb_lists(next_vec.indices, 2 * n_orb, args.n_elec -
                                              args.frozen, byte_nums, byte_idx)
-        n_walk = numpy.sum(numpy.abs(next_vals))
-        en_shift, last_nwalk = adjust_shift(en_shift, n_walk, last_nwalk, args.walker_target, args.damping / args.interval / args.epsilon)
-        io_utils.calc_results(results, next_dets, next_vals, en_shift, iterat,
-                              hf_col_dets, hf_col_matrel)
-        sol_dets = next_dets
-        sol_vals = next_vals
+        n_walk = next_vec.one_norm()
+        en_shift, last_nwalk = adjust_shift(
+            en_shift, n_walk, last_nwalk, args.walker_target, args.damping / args.interval / args.epsilon)
+        io_utils.calc_results(results, next_vec, en_shift, iterat, hf_col)
+        sol_vec = next_vec
 
 
 def adjust_shift(shift, n_walkers, last_walkers, target_walkers, damp_factor):

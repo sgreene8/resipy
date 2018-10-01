@@ -8,7 +8,7 @@ import numpy
 import argparse
 from resipy import fci_utils
 from resipy import fci_c_utils
-from resipy import sparse_utils
+from resipy import sparse_vector
 from resipy import near_uniform
 from resipy import compress_utils
 from resipy import io_utils
@@ -27,9 +27,9 @@ def main():
     hf_det = fci_utils.gen_hf_bitstring(n_orb, args.n_elec - args.frozen)
 
     # Initialize solution vector
-    sol_dets = numpy.array([hf_det], dtype=numpy.int64)
-    sol_vals = numpy.array([1.])
-    occ_orbs = fci_c_utils.gen_orb_lists(sol_dets, 2 * n_orb, args.n_elec -
+    ini_idx = numpy.array([hf_det], dtype=numpy.int64)
+    sol_vec = sparse_vector.SparseVector(ini_idx, numpy.array([1.]))
+    occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, 2 * n_orb, args.n_elec -
                                          args.frozen, byte_nums, byte_idx)
 
     results = io_utils.setup_results(args.result_int, args.result_dir,
@@ -44,18 +44,17 @@ def main():
     rngen_ptrs = near_uniform.initialize_mt(args.procs)
 
     # Elements in the HF column of FCI matrix
-    hf_col_dets, hf_col_matrel = fci_utils.gen_hf_ex(
-        hf_det, occ_orbs[0], n_orb, symm, eris, args.frozen)
+    hf_col = fci_utils.gen_hf_ex(hf_det, occ_orbs[0], n_orb, symm, eris, args.frozen)
 
     for iterat in range(args.max_iter):
         # number of samples to draw from each column
-        n_col = numpy.ceil(args.H_sample * numpy.abs(sol_vals)).astype(int)
+        n_col = numpy.ceil(args.H_sample * numpy.abs(sol_vec.values)).astype(int)
 
         if args.prob_dist == "near_uniform":
             n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(n_col, p_doub)
             # Sample double excitations
             doub_orbs, doub_probs, doub_idx = near_uniform.doub_multin(
-                sol_dets, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
+                sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
             doub_matrel = fci_utils.doub_matr_el_nosgn(
                 doub_orbs, eris, args.frozen)
             # Retain nonzero elements
@@ -65,17 +64,17 @@ def main():
             doub_matrel = doub_matrel[doub_nonz]
             # Calculate determinants and matrix elements
             doub_dets, doub_signs = fci_utils.doub_dets_parity(
-                sol_dets[doub_idx], doub_orbs)
+                sol_vec.indices[doub_idx], doub_orbs)
             doub_matrel *= args.epsilon / doub_probs / p_doub / \
-                n_col[doub_idx] * doub_signs * -sol_vals[doub_idx]
+                n_col[doub_idx] * doub_signs * -sol_vec.values[doub_idx]
             # Start forming next iterate
             spawn_dets = doub_dets
             spawn_vals = doub_matrel
 
             # Sample single excitations
-            sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(sol_dets, occ_orbs, symm, symm_lookup,  n_sing_col, rngen_ptrs)
+            sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(sol_vec.indices, occ_orbs, symm, symm_lookup,  n_sing_col, rngen_ptrs)
             sing_dets, sing_matrel = fci_c_utils.single_dets_matrel(
-                sol_dets[sing_idx], sing_orbs, eris, h_core, occ_orbs[sing_idx], args.frozen)
+                sol_vec.indices[sing_idx], sing_orbs, eris, h_core, occ_orbs[sing_idx], args.frozen)
             # Retain nonzero elements
             sing_nonz = sing_matrel != 0
             sing_idx = sing_idx[sing_nonz]
@@ -83,7 +82,7 @@ def main():
             sing_matrel = sing_matrel[sing_nonz]
             # Calculate determinants and matrix elements
             sing_matrel *= args.epsilon / sing_probs / \
-                (1 - p_doub) / n_col[sing_idx] * -sol_vals[sing_idx]
+                (1 - p_doub) / n_col[sing_idx] * -sol_vec.values[sing_idx]
             # Add to next iterate
             spawn_dets = numpy.append(spawn_dets, sing_dets)
             spawn_vals = numpy.append(spawn_vals, sing_matrel)
@@ -91,30 +90,19 @@ def main():
         diag_matrel = fci_c_utils.diag_matrel(
             occ_orbs, h_core, eris, args.frozen) - hf_en
         diag_matrel = 1 - args.epsilon * diag_matrel
-        diag_matrel *= sol_vals
+        diag_matrel *= sol_vec.values
+        next_vec = sparse_vector.SparseVector(sol_vec.indices, diag_matrel)
 
         # Add vectors in sparse format
-        next_dets, next_vals = sparse_utils.add_vectors(
-            sol_dets, spawn_dets, diag_matrel, spawn_vals)
-        one_norm = numpy.sum(numpy.abs(next_vals))
-        io_utils.calc_results(results, next_dets, next_vals, 0, iterat,
-                              hf_col_dets, hf_col_matrel)
-        next_vals /= one_norm
-        sol_dets, sol_vals = compress_utils.compress_sparse_vector(
-            next_dets, next_vals, args.sparsity)
-        occ_orbs = fci_c_utils.gen_orb_lists(sol_dets, 2 * n_orb, args.n_elec -
+        next_vec.add(spawn_dets, spawn_vals)
+        one_norm = next_vec.one_norm()
+        io_utils.calc_results(results, next_vec, 0, iterat, hf_col)
+        next_vec.values /= one_norm
+        cmp_dets, cmp_vals = compress_utils.compress_sparse_vector(
+            next_vec.indices, next_vec.values, args.sparsity)
+        sol_vec = sparse_vector.SparseVector(cmp_dets, cmp_vals)
+        occ_orbs = fci_c_utils.gen_orb_lists(cmp_dets, 2 * n_orb, args.n_elec -
                                              args.frozen, byte_nums, byte_idx)
-
-
-def _sample_singles(vec_dets, vec_occ, orb_symm, symm_lookup, n_col, rn_vec):
-    """
-    For the near-uniform distribution, multinomially choose the single
-    excitations for each column.
-    """
-    det_idx = fci_c_utils.ind_from_count(n_col)
-    orb_choices, ex_probs = near_uniform.sing_multin(vec_dets, vec_occ, orb_symm,
-                                                     symm_lookup, n_col, rn_vec)
-    return orb_choices, ex_probs, det_idx
 
 
 def _parse_args():

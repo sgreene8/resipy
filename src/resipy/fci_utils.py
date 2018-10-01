@@ -10,6 +10,7 @@ spin-up orbitals, and the leftmost M to spin-down.
 
 import numpy
 import fci_c_utils
+import sparse_vector
 
 
 def excite_signs(cre_ops, des_ops, bit_strings):
@@ -319,4 +320,4 @@ def gen_hf_ex(hf_det, hf_occ, n_orb, orb_symm, eris, n_frozen):
     matr_el = matr_el[srt_idx]
     ex_dets = numpy.insert(ex_dets, 0, hf_det)
     matr_el = numpy.insert(matr_el, 0, 0.)
-    return ex_dets, matr_el
+    return sparse_vector.SparseVector(ex_dets, matr_el)
