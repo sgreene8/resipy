@@ -50,6 +50,25 @@ def initialize_mt(unsigned int num_threads):
         ini_ptrs[i] = <unsigned long> mts
     return ini_ptrs
 
+
+def bin_n_sing_doub(col_nsamp, p_doub):
+    """Binomially partition the samples for each column into single and double excitations.
+
+        Parameters
+        ----------
+        col_nsamp : (numpy.ndarray, uint32)
+            Number of off-diagonal elements to choose from each column
+        p_doub : (float)
+            Probability of choosing a double, instead of a single excitation
+    """ 
+
+    doub_samp = numpy.random.binomial(col_nsamp, p_doub)
+    doub_samp = doub_samp.astype(numpy.uint32)
+    sing_samp = col_nsamp - doub_samp
+    sing_samp = sing_samp.astype(numpy.uint32)
+    return doub_samp, sing_samp
+
+
 def doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs, 
                        unsigned char[:] orb_symm, unsigned char[:,:] lookup_tabl,
                        unsigned int[:] num_sampl, unsigned long[:] mt_ptrs):
@@ -106,6 +125,7 @@ def doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs,
     cdef numpy.ndarray[numpy.uint8_t, ndim=2] chosen_orbs = numpy.zeros([tot_sampl, 4],
                                                                           dtype=numpy.uint8)
     cdef numpy.ndarray[numpy.float64_t] prob_vec = numpy.zeros(tot_sampl)
+    cdef numpy.ndarray[numpy.uint32_t]  idx_arr = numpy.zeros(tot_sampl, dtype=numpy.uint32)
 
     for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
         if (num_sampl[det_idx] == 0):
@@ -163,8 +183,13 @@ def doub_multin(long long[:] dets, unsigned char[:,:] occ_orbs,
                 chosen_orbs[tot_sampl + i, 2] = unocc2
                 chosen_orbs[tot_sampl + i, 3] = unocc1
             prob_vec[tot_sampl + i] = prob
+            idx_arr[tot_sampl + i] = det_idx
 
-    return chosen_orbs, prob_vec
+    successes = prob_vec > 0
+    chosen_orbs =  chosen_orbs[successes]
+    prob_vec = prob_vec[successes]
+    idx_arr = idx_arr[successes]
+    return chosen_orbs, prob_vec, idx_arr
 
 
 
@@ -198,6 +223,8 @@ def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
             chosen occupied (0th column) and unoccupied (1st column) orbitals
         (numpy.ndarray, float64) :
             probability of each choice
+        (numpy.ndarray, uint32) :
+            index of origin determinant of each choice in the dets array
     '''
     
     cdef unsigned int num_dets = occ_orbs.shape[0]
@@ -223,6 +250,7 @@ def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
     cdef numpy.ndarray[numpy.uint8_t, ndim=2] chosen_orbs = numpy.zeros([tot_sampl, 2], 
                                                                           dtype=numpy.uint8)
     cdef numpy.ndarray[numpy.float64_t] prob_vec = numpy.zeros(tot_sampl)
+    cdef numpy.ndarray[numpy.uint32_t] idx_arr = numpy.zeros(tot_sampl, dtype=numpy.uint32)
     
     for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
         if (num_sampl[det_idx] == 0):
@@ -259,8 +287,13 @@ def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
                                         (num_elec - delta_s))
             chosen_orbs[sampl_idx + j, 0] = occ_orb
             chosen_orbs[sampl_idx + j, 1] = virt_orb
+            idx_arr[sampl_idx + j] = det_idx
     
-    return chosen_orbs, prob_vec
+    successes = prob_vec > 0
+    chosen_orbs =  chosen_orbs[successes]
+    prob_vec = prob_vec[successes]
+    idx_arr = idx_arr[successes]
+    return chosen_orbs, prob_vec, idx_arr
 
 
 cdef unsigned int _sing_choose_occ(unsigned int[:] counts, mt_struct *mt_ptr

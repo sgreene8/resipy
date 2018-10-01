@@ -121,6 +121,8 @@ def compress_sparse_vector(vec_idx, vec_vals, m_nonzero, take_abs=True):
     """
 
     initial_n = vec_idx.shape[0]
+    if initial_n < m_nonzero:
+        return vec_idx, vec_vals
     num_to_sample = numpy.minimum(m_nonzero, initial_n)
 
     if take_abs:

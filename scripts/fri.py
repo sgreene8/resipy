@@ -17,7 +17,7 @@ from resipy import io_utils
 def main():
     args = _parse_args()
 
-    h_core, eris, symm, hf_en = _read_in_hf(args)
+    h_core, eris, symm, hf_en = io_utils.read_in_hf(args.hf_path, args.frozen)
 
     # Generate lookup tables for later use
     byte_nums, byte_idx = fci_utils.gen_byte_table()
@@ -52,9 +52,9 @@ def main():
         n_col = numpy.ceil(args.H_sample * numpy.abs(sol_vals)).astype(int)
 
         if args.prob_dist == "near_uniform":
-            n_doub_col, n_sing_col = _choose_sing_doub(n_col, p_doub)
+            n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(n_col, p_doub)
             # Sample double excitations
-            doub_orbs, doub_probs, doub_idx = _sample_doubles(
+            doub_orbs, doub_probs, doub_idx = near_uniform.doub_multin(
                 sol_dets, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
             doub_matrel = fci_utils.doub_matr_el_nosgn(
                 doub_orbs, eris, args.frozen)
@@ -73,8 +73,7 @@ def main():
             spawn_vals = doub_matrel
 
             # Sample single excitations
-            sing_orbs, sing_probs, sing_idx = _sample_singles(
-                sol_dets, occ_orbs, symm, symm_lookup, n_sing_col, rngen_ptrs)
+            sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(sol_dets, occ_orbs, symm, symm_lookup,  n_sing_col, rngen_ptrs)
             sing_dets, sing_matrel = fci_c_utils.single_dets_matrel(
                 sol_dets[sing_idx], sing_orbs, eris, h_core, occ_orbs[sing_idx], args.frozen)
             # Retain nonzero elements
@@ -118,51 +117,6 @@ def _sample_singles(vec_dets, vec_occ, orb_symm, symm_lookup, n_col, rn_vec):
     return orb_choices, ex_probs, det_idx
 
 
-def _sample_doubles(vec_dets, vec_occ, orb_symm, symm_lookup, n_col, rn_vec):
-    """
-    For the near-uniform distribution, multinomially choose the double
-    excitations for each column.
-    """
-    det_idx = fci_c_utils.ind_from_count(n_col)
-    orb_choices, ex_probs = near_uniform.doub_multin(vec_dets, vec_occ, orb_symm,
-                                                     symm_lookup, n_col, rn_vec)
-    successes = ex_probs > 0
-    orb_choices = orb_choices[successes]
-    ex_probs = ex_probs[successes]
-    det_idx = det_idx[successes]
-
-    return orb_choices, ex_probs, det_idx
-
-
-def _choose_sing_doub(col_nsamp, p_doub):
-    """
-    For the near-uniform distribution, binomially partition the samples for
-    each column into single and double excitations.
-    """
-
-    doub_samp = numpy.random.binomial(col_nsamp, p_doub)
-    doub_samp = doub_samp.astype(numpy.uint32)
-    sing_samp = col_nsamp - doub_samp
-    sing_samp = sing_samp.astype(numpy.uint32)
-    return doub_samp, sing_samp
-
-
-def _read_in_hf(arg_dict):
-    """
-    Read in and process the output files from a pyscf HF calculation
-    """
-    h_core = numpy.load(arg_dict.hf_path + 'hcore.npy')
-
-    eris = numpy.load(arg_dict.hf_path + 'eris.npy')
-
-    symm = numpy.load(arg_dict.hf_path + 'symm.npy')
-    symm = symm[(arg_dict.frozen / 2):]
-
-    hf_en = numpy.genfromtxt(arg_dict.hf_path + 'hf_en.txt')
-
-    return h_core, eris, symm, hf_en
-
-
 def _parse_args():
     """
     Subroutine to parse command line arguments
@@ -181,6 +135,8 @@ def _parse_args():
                         help="Target number of nonzero elements in the solution vector")
     parser.add_argument('prob_dist', choices=["near_uniform"],
                         help="Probability distribution to use to select Hamiltonian off-diagonal elements")
+    parser.add_argument('sampl_mode', choices=["multinomial", "all"],
+                        help="Method for sampling elements from this probability distribution.")
     parser.add_argument('-f', '--frozen', type=int, default=0,
                         help="Number of core electrons frozen")
     parser.add_argument('-p', '--procs', type=int, default=8,

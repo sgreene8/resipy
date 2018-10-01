@@ -106,3 +106,37 @@ def calc_results(r_dict, vec_dets, vec_vals, shift, iter_num, hf_dets, hf_matrel
             numpy.savetxt(r_dict['n_walk'][0], r_dict['n_walk'][1])
         if 'sparsity':
             numpy.savetxt(r_dict['sparsity'][0], r_dict['sparsity'][1])
+
+
+def read_in_hf(hf_path, n_frozen):
+    """Read in and process the output files from a pyscf HF calculation
+
+        Parameters
+        ----------
+        hf_path : (str)
+            Directory containing output files from the HF calculation
+        n_frozen : (unsigned int)
+            Desired number of electrons to be frozen in the calculation
+
+        Returns
+        -------
+        (numpy.ndarray) :
+            2-D array containing the 1-electron integrals in the spatial orbital basis
+        (numpy.ndarray) :
+            4-D array containing the 2-electron integrals in the spatial orbital basis
+        (numpy.ndarray) :
+            1-D array containing the irreducible representations of each spatial orbital
+        (float) :
+            Hartree-Fock electronic energy
+    """
+    h_core = numpy.load(hf_path + 'hcore.npy')
+
+    eris = numpy.load(hf_path + 'eris.npy')
+
+    symm = numpy.load(hf_path + 'symm.npy')
+    symm = symm[(n_frozen / 2):]
+
+    hf_en = numpy.genfromtxt(hf_path + 'hf_en.txt')
+
+    return h_core, eris, symm, hf_en
+
