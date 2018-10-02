@@ -50,42 +50,51 @@ def main():
         # number of samples to draw from each column
         n_col = numpy.ceil(args.H_sample * numpy.abs(sol_vec.values)).astype(int)
 
-        if args.prob_dist == "near_uniform":
+        if args.prob_dist == "near_uniform" and args.sampl_mode == "multinomial":
             n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(n_col, p_doub)
             # Sample double excitations
             doub_orbs, doub_probs, doub_idx = near_uniform.doub_multin(
                 sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
-            doub_matrel = fci_utils.doub_matr_el_nosgn(
-                doub_orbs, eris, args.frozen)
-            # Retain nonzero elements
-            doub_nonz = doub_matrel != 0
-            doub_idx = doub_idx[doub_nonz]
-            doub_orbs = doub_orbs[doub_nonz]
-            doub_matrel = doub_matrel[doub_nonz]
-            # Calculate determinants and matrix elements
-            doub_dets, doub_signs = fci_utils.doub_dets_parity(
-                sol_vec.indices[doub_idx], doub_orbs)
-            doub_matrel *= args.epsilon / doub_probs / p_doub / \
-                n_col[doub_idx] * doub_signs * -sol_vec.values[doub_idx]
-            # Start forming next iterate
-            spawn_dets = doub_dets
-            spawn_vals = doub_matrel
-
+            doub_probs *= p_doub * n_col[doub_idx]
             # Sample single excitations
             sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(sol_vec.indices, occ_orbs, symm, symm_lookup,  n_sing_col, rngen_ptrs)
-            sing_dets, sing_matrel = fci_c_utils.single_dets_matrel(
-                sol_vec.indices[sing_idx], sing_orbs, eris, h_core, occ_orbs[sing_idx], args.frozen)
-            # Retain nonzero elements
-            sing_nonz = sing_matrel != 0
-            sing_idx = sing_idx[sing_nonz]
-            sing_dets = sing_dets[sing_nonz]
-            sing_matrel = sing_matrel[sing_nonz]
-            # Calculate determinants and matrix elements
-            sing_matrel *= args.epsilon / sing_probs / \
-                (1 - p_doub) / n_col[sing_idx] * -sol_vec.values[sing_idx]
-            # Add to next iterate
-            spawn_dets = numpy.append(spawn_dets, sing_dets)
-            spawn_vals = numpy.append(spawn_vals, sing_matrel)
+            sing_probs *= (1 - p_doub) * n_col[sing_idx]
+        elif args.sampl_mode == "all":
+            # Choose all double excitations
+            doub_orbs, doub_idx = fci_c_utils.all_doub_ex(sol_vec.indices, occ_orbs, symm)
+            doub_probs = numpy.ones_like(doub_idx, dtype=numpy.float64)
+            # Choose all single excitations
+            sing_orbs, sing_idx = fci_c_utils.all_sing_ex(sol_vec.indices, occ_orbs, symm)
+            sing_probs = numpy.ones_like(sing_idx, dtype=numpy.float64)
+
+        doub_matrel = fci_utils.doub_matr_el_nosgn(
+            doub_orbs, eris, args.frozen)
+        # Retain nonzero elements
+        doub_nonz = doub_matrel != 0
+        doub_idx = doub_idx[doub_nonz]
+        doub_orbs = doub_orbs[doub_nonz]
+        doub_matrel = doub_matrel[doub_nonz]
+        # Calculate determinants and matrix elements
+        doub_dets, doub_signs = fci_utils.doub_dets_parity(
+            sol_vec.indices[doub_idx], doub_orbs)
+        doub_matrel *= args.epsilon / doub_probs * doub_signs * -sol_vec.values[doub_idx]
+        # Start forming next iterate
+        spawn_dets = doub_dets
+        spawn_vals = doub_matrel
+
+        sing_dets, sing_matrel = fci_c_utils.single_dets_matrel(
+            sol_vec.indices[sing_idx], sing_orbs, eris, h_core, occ_orbs[sing_idx], args.frozen)
+        # Retain nonzero elements
+        sing_nonz = sing_matrel != 0
+        sing_idx = sing_idx[sing_nonz]
+        sing_dets = sing_dets[sing_nonz]
+        sing_matrel = sing_matrel[sing_nonz]
+        # Calculate determinants and matrix elements
+        sing_matrel *= args.epsilon / sing_probs * -sol_vec.values[sing_idx]
+        # Add to next iterate
+        spawn_dets = numpy.append(spawn_dets, sing_dets)
+        spawn_vals = numpy.append(spawn_vals, sing_matrel)
+
         # Diagonal matrix elements
         diag_matrel = fci_c_utils.diag_matrel(
             occ_orbs, h_core, eris, args.frozen) - hf_en

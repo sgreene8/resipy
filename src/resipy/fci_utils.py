@@ -308,10 +308,7 @@ def gen_hf_ex(hf_det, hf_occ, n_orb, orb_symm, eris, n_frozen):
     det_arr = numpy.array([hf_det], numpy.int64)
     occ_arr = hf_occ.copy()
     occ_arr.shape = (1, -1)
-    ex_orbs = fci_c_utils.all_doub_ex(det_arr, occ_arr, n_orb)
-    symm_allow = ((orb_symm[ex_orbs[:, 0] % n_orb] ^ orb_symm[ex_orbs[:, 1] % n_orb]) ==
-                  (orb_symm[ex_orbs[:, 2] % n_orb] ^ orb_symm[ex_orbs[:, 3] % n_orb]))
-    ex_orbs = ex_orbs[symm_allow]
+    ex_orbs, det_idx = fci_c_utils.all_doub_ex(det_arr, occ_arr, orb_symm)
     matr_el = doub_matr_el_nosgn(ex_orbs, eris, n_frozen)
     ex_dets, ex_signs = doub_dets_parity(det_arr, ex_orbs)
     matr_el *= ex_signs

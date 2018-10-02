@@ -196,7 +196,7 @@ def diag_matrel(unsigned char[:,:] occ_orbs, double[:,:] hcore,
     return matrix_el
 
 
-def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, unsigned char num_orb):
+def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[numpy.uint8_t] orb_symm):
     """Generate all spin-alllowed single excitations from an array of Slater determinants.
     
     Parameters
@@ -205,18 +205,21 @@ def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, unsigned char n
         Bit-string representations of Slater determinants
     occ_orbs : (numpy.ndarray, uint8)
         Orbitals occupied in each determinant
-    num_orb : (unsigned int)
-        Number of spatial orbitals in the basis.
+    orb_symm : (numpy.ndarray, uint8)
+        Irreducible representations of the spatial orbitals in the basis
     
     Returns
     -------
     (numpy.ndarray, uint8) :
         Occupied (0th column) and unoccupied (1st column) orbitals for each excitation
+    (numpy.ndarray, uint32) :
+        Index of the origin determinant of each excitation in the dets array
     """
 
     cdef unsigned int det_idx
     cdef unsigned long num_dets = occ_orbs.shape[0]
     cdef unsigned int num_elec = occ_orbs.shape[1]
+    cdef unsigned int num_orb = orb_symm.shape[0]
     cdef unsigned int num_sing_ex = num_elec * (num_orb - num_elec / 2)
     cdef unsigned int tot_sampl = num_dets * num_sing_ex
     
@@ -225,7 +228,16 @@ def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, unsigned char n
     for det_idx in range(num_dets):
         _sing_ex(dets[det_idx], occ_orbs[det_idx], &chosen_orbs[det_idx * num_sing_ex, 0],
                  num_orb)
-    return chosen_orbs
+
+    idx_arr = numpy.arange(num_dets, dtype=numpy.uint32)
+    idx_arr.shape = (-1, 1)
+    idx_arr = numpy.tile(idx_arr, (1, num_sing_ex))
+    idx_arr.shape = (-1)
+
+    successes = (orb_symm[chosen_orbs[:, 0] % num_orb] == 
+                 orb_symm[chosen_orbs[:, 1] % num_orb])
+
+    return chosen_orbs[successes], idx_arr[successes]
 
 
 cdef void _sing_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_arr,
@@ -252,7 +264,7 @@ cdef void _sing_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
                 idx += 2
 
 
-def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, unsigned char num_orb):
+def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[numpy.uint8_t] orb_symm):
     """Generate all spin-alllowed double excitations from an array of Slater determinants.
     
     Parameters
@@ -261,18 +273,21 @@ def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, unsigned char n
         Bit-string representations of Slater determinants
     occ_orbs : (numpy.ndarray, uint8)
         Orbitals occupied in each determinant
-    num_orb : (unsigned int)
-        Number of spatial orbitals in the basis.
+    orb_symm : (numpy.ndarray, uint8)
+        Irreducible representations of the spatial orbitals in the basis
     
     Returns
     -------
     (numpy.ndarray, uint8) :
         Occupied (0th and 1st columns) and unoccupied (2nd and 3rd columns) orbitals for each excitation
+    (numpy.ndarray, uint32) :
+        Index of the origin determinant of each excitation in the dets array
     """
 
     cdef unsigned int det_idx
     cdef unsigned long num_dets = occ_orbs.shape[0]
     cdef unsigned int num_elec = occ_orbs.shape[1]
+    cdef unsigned int num_orb = orb_symm.shape[0]
     cdef unsigned int n_unocc = num_orb - num_elec / 2
     cdef unsigned int n_same = num_elec * (num_elec / 2 - 1) / 2 * n_unocc * (n_unocc - 1) / 2
     cdef unsigned int n_diff = num_elec / 2 * num_elec / 2 * n_unocc ** 2
@@ -283,7 +298,17 @@ def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, unsigned char n
     for det_idx in range(num_dets):
         _doub_ex(dets[det_idx], occ_orbs[det_idx], &chosen_orbs[det_idx * (n_same + 
                                                                 n_diff), 0], num_orb)
-    return chosen_orbs
+
+    idx_arr = numpy.arange(num_dets, dtype=numpy.uint32)
+    idx_arr.shape = (-1, 1)
+    idx_arr = numpy.tile(idx_arr, (1, n_same + n_diff))
+    idx_arr.shape = (-1)
+
+    successes = (orb_symm[chosen_orbs[:, 0] % num_orb] ^ 
+                 orb_symm[chosen_orbs[:, 1] % num_orb] ^ 
+                 orb_symm[chosen_orbs[:, 2] % num_orb] ^ 
+                 orb_symm[chosen_orbs[:, 3] % num_orb]) == 0
+    return chosen_orbs[successes], idx_arr[successes]
 
 cdef void _doub_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_arr,
                     unsigned int num_orb):
