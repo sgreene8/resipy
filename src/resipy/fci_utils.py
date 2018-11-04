@@ -1,3 +1,4 @@
+#!/usr/bin/env python2ß
 """
 Utilities for calculating matrix elements of the FCI Hamiltonian and
 manipulating bit-string representations of Slater determinants.
@@ -202,7 +203,7 @@ def count_singex(det, occ_orbs, orb_symm, lookup_tabl):
         elec_symm = orb_symm[elec_orb % num_orb]
         elec_spin = elec_orb / num_orb
         for symm_idx in range(lookup_tabl[elec_symm, 0]):
-            if not(det & (1L << (lookup_tabl[elec_symm, symm_idx + 1] +
+            if not(det & (1 << (lookup_tabl[elec_symm, symm_idx + 1] +
                                  num_orb * elec_spin))):
                 num_ex += 1
 
@@ -318,3 +319,29 @@ def gen_hf_ex(hf_det, hf_occ, n_orb, orb_symm, eris, n_frozen):
     ex_dets = numpy.insert(ex_dets, 0, hf_det)
     matr_el = numpy.insert(matr_el, 0, 0.)
     return sparse_vector.SparseVector(ex_dets, matr_el)
+
+
+def eris_space2spin(eris_space):
+    """Convert the 2-electron integrals from a Hartree-Fock calculation
+    from the spatial orbital basis to the spin orbital basis, and 
+    antisymmetrize them.
+
+    Parameters
+    ----------
+    eris_space : (numpy.ndarray, float)
+        2-electron integrals in the spatial basis in physicist format <12|12>
+
+    Returns
+    -------
+    (numpy.ndarray, float) :
+        Antisymmetrized 2-electron integrals in spin basis in physicist format <12||12>
+    """
+
+    n_orb = eris_space.shape[0]
+    eris_spin = numpy.zeros((2 * n_orb, 2 * n_orb, 2 * n_orb, 2 * n_orb))
+    eris_spin[:n_orb, :n_orb, :n_orb, :n_orb] = eris_space
+    eris_spin[n_orb:, n_orb:, n_orb:, n_orb:] = eris_space
+    eris_spin[n_orb:, :n_orb, n_orb:, :n_orb] = eris_space
+    eris_spin[:n_orb, n_orb:, :n_orb, n_orb:] = eris_space
+    return eris_spin - eris_spin.transpose(0, 1, 3, 2)
+

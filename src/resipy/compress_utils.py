@@ -1,85 +1,178 @@
+#!/usr/bin/env python2
 """
 Utilities for performing stochastic matrix and vector compressions.
 """
 
 import numpy
+import misc_c_utils
 
 
-def round_binomially(vec, num_round):
-    """Round non-integer entries in vec to integer entries in b such that
-        b[i] ~ (binomial(num_round[i], vec[i] - floor(vec[i])) + floor(vec[i])
-                * num_round)
+def fri_subd(vec, num_div, sub_weights, n_samp):
+    """ Perform FRI compression on a vector whose first elements,
+    vec[i] are each subdivided into equal segments, and
+    whose last elements are each divided into unequal segments.
 
-        Parameters
-        ----------
-        vec : (numpy.ndarray, float)
-            non-integer numbers to be rounded
-        num_round : (numpy.ndarray, unsigned int)
-            parameter of the binomial distribution for each entry in vec, must
-            have same shape as vec
+    Parameters
+    ----------
+    vec : (numpy.ndarray, float)
+        vector on which to perform compression. Elements can
+        be negative, and it need not be normalized. vec.shape[0]
+        must equal num_div.shape[0] + sub_weights.shape[0]
+    num_div : (numpy.ndarray, unsigned int)
+        the first num_div.shape[0] elements of vec are subdivided
+        into equal segments, the number of which for each element
+        is specified in this array
+    sub_weights : (numpy.ndarray, float)
+        the weights of the unequal subdivisions of the last
+        sub_weights.shape[0] elements of vec. Must be row-
+        normalized.
 
-        Returns
-        -------
-        (numpy.ndarray, int)
-            integer array of results
+    Returns
+    -------
+    (numpy.ndarray, uint32)
+        2-D array of indices of nonzero elements in the vector. The
+        0th column specifies the index in the vec array, while
+        the 1st specifies the index within the subdivision. Not
+        necessarily sorted, although indices in the uniform part
+        of the array are grouped first, followed by indices in the
+        nonuniform part.
+    (numpy.ndarray, float64)
+        values of nonzero elements in the compressed vector
     """
+    new_idx = numpy.zeros([n_samp, 2], dtype=numpy.uint32)
+    new_vals = numpy.zeros(n_samp)
+    weights = numpy.abs(vec)
+    sub_cp = numpy.copy(sub_weights)
 
-    flr_vec = numpy.floor(vec)
-    flr_vec = flr_vec.astype(int)
-    b = flr_vec * num_round + numpy.random.binomial(num_round, vec - flr_vec)
-    return b
+    preserve_uni, preserve_nonuni = _keep_idx(weights, num_div, sub_cp, n_samp)
+    preserve_counts = numpy.zeros_like(num_div, dtype=numpy.uint32)
+    preserve_counts[preserve_uni] = num_div[preserve_uni]
+    uni_rpt = misc_c_utils.ind_from_count(preserve_counts)
+    n_exact_uni = uni_rpt.shape[0]
+    new_idx[:n_exact_uni, 0] = uni_rpt
+    uni_seq = misc_c_utils.seq_from_count(preserve_counts)
+    new_idx[:n_exact_uni, 1] = uni_seq
+    new_vals[:n_exact_uni] = vec[uni_rpt] / num_div[uni_rpt]
+
+    nonuni_exact_idx = numpy.nonzero(preserve_nonuni)
+    n_exact_nonuni = nonuni_exact_idx[0].shape[0]
+
+    n_samp -= (n_exact_uni + n_exact_nonuni)
+    num_uni_wt = num_div.shape[0]
+
+    sub_renorm = numpy.sum(sub_cp, axis=1)
+    weights[num_uni_wt:] *= sub_renorm
+    sub_renorm.shape = (-1, 1)
+    sub_renorm = 1. / sub_renorm
+    sub_cp *= sub_renorm
+    one_norm = weights.sum()
+
+    if abs(one_norm) > 1e-10:
+        sampl_idx = sys_subd(weights, num_div, sub_cp, n_samp)
+        end_idx = n_exact_uni + n_samp
+        new_idx[n_exact_uni:end_idx] = sampl_idx
+        new_vals[n_exact_uni:end_idx] = numpy.sign(vec[sampl_idx[:, 0]]) * one_norm / n_samp
+    else:
+        end_idx = n_exact_uni
+
+    end_idx2 = end_idx + n_exact_nonuni
+    new_idx[end_idx:end_idx2, 0] = nonuni_exact_idx[0] + num_uni_wt
+    new_idx[end_idx:end_idx2, 1] = nonuni_exact_idx[1]
+    new_vals[end_idx:end_idx2] = vec[num_uni_wt + nonuni_exact_idx[0]] * sub_weights[nonuni_exact_idx]
+    return new_idx[:end_idx2], new_vals[:end_idx2]
 
 
-def sample_alias(alias, Q, row_idx):
-    """Perform multinomial sampling using the alias method for an array of
-        probability distributions.
+def fri_1D(vec, n_samp):
+    """Compress a vector in full (non-sparse format) using the
+        FRI scheme, potentially preserving some elements exactly.
 
-        Parameters
-        ----------
-        alias : (numpy.ndarray, unsigned int)
-            alias indices as calculated in cyth_helpers2.setup_alias
-        Q : (numpy.ndarray, float)
-            alias probabilities as calculated in cyth_helpers2.setup_alias
-        row_idx : (numpy.ndarray, unsigned int)
-            Row index in alias/Q of each value to sample. Can be obtained from
-            desired numbers of samples using cyth_helpers2.ind_from_count()
+    Parameters
+    ----------
+    vec : (numpy.ndarray)
+        vector to compress
+    n_samp : (unsigned int)
+        desired number of nonzero entries in the output vector
 
-        Returns
-        -------
-        (numpy.ndarray, unsigned char)
-            1-D array of chosen column indices of each sample
+    Returns
+    -------
+    (numpy.ndarray, unsigned int)
+        indices of nonzero elements in compressed vector, in order
+    (numpy.ndarray, float)
+        values of nonzero elements in compressed vector
     """
+    weights = numpy.abs(vec)
+    new_vec = numpy.zeros(weights.shape[0])
 
-    n_states = alias.shape[1]
-    tot_samp = row_idx.shape[0]
-    r_ints = numpy.random.randint(n_states, size=tot_samp)
-    orig_success = numpy.random.binomial(1, Q[row_idx, r_ints])
-    orig_idx = orig_success == 1
-    alias_idx = numpy.logical_not(orig_idx)
+    counts = numpy.ones_like(vec, dtype=numpy.uint32)
+    sub_wts = numpy.empty((0, 2))
+    preserve_idx, empty_ret = _keep_idx(weights, counts, sub_wts, n_samp)
+    preserve_vals = vec[preserve_idx]
+    new_vec[preserve_idx] = preserve_vals
 
-    choices = numpy.zeros(tot_samp, dtype=numpy.uint)
-    choices[orig_idx] = r_ints[orig_idx]
-    choices[alias_idx] = alias[row_idx[alias_idx], r_ints[alias_idx]]
-    choices = choices.astype(numpy.uint8)
-    return choices
+    n_samp -= preserve_vals.shape[0]
+    one_norm = weights.sum()
+
+    if abs(one_norm) > 1e-10:
+        sampl_idx = sys_resample(weights, n_samp)
+        new_vec[sampl_idx] = one_norm / n_samp * numpy.sign(vec[sampl_idx])
+
+    nonz_idx = numpy.nonzero(new_vec)[0]
+    return nonz_idx, new_vec[nonz_idx]
+
+
+def _keep_idx(weights, num_div, sub_weights, n_samp):
+    # Calculate indices of elements in weights that are preserved exactly
+    # Elements in weights are subdivided according to num_div and sub_weights
+    num_uni = num_div.shape[0]
+    uni_keep = numpy.zeros(num_uni, dtype=numpy.bool_)
+    nonuni_keep = numpy.zeros_like(sub_weights, dtype=numpy.bool_)
+    one_norm = weights.sum()
+    any_kept = True
+    uni_weights = weights[:num_uni] / num_div
+    nonuni_weights = weights[num_uni:]
+    nonuni_weights.shape = (-1, 1)
+    nonuni_weights = nonuni_weights * sub_weights
+    while any_kept and one_norm > 1e-9:
+        add_uni = one_norm / n_samp <= uni_weights
+        uni_weights[add_uni] = 0
+        uni_keep[add_uni] = True
+        num_add_uni = num_div[add_uni].sum()
+        n_samp -= num_add_uni
+        one_norm -= weights[:num_uni][add_uni].sum()
+
+        if one_norm > 0:
+            add_nonuni = one_norm / n_samp <= nonuni_weights
+            chosen_weights = nonuni_weights[add_nonuni]
+            nonuni_weights[add_nonuni] = 0
+            nonuni_keep[add_nonuni] = True
+            num_add_nonuni = chosen_weights.shape[0]
+            n_samp -= num_add_nonuni
+            one_norm -= chosen_weights.sum()
+        else:
+            num_add_nonuni = 0
+
+        any_kept = num_add_uni > 0 or num_add_nonuni > 0
+
+    sub_weights[nonuni_keep] = 0
+    weights[:num_uni][uni_keep] = 0
+    return uni_keep, nonuni_keep
 
 
 def sys_resample(vec, nsample):
     """Choose nsample elements of vector vec according to systematic resampling
         algorithm (eq. 44-46 in SIAM Rev. 59 (2017), 547-587)
 
-        Parameters
-        ----------
-        vec : (numpy.ndarray, float)
-            the elements (probabilities) to be sampled. vec is assumed to have
-            a 1-norm of 1
-        nsample : (unsigned int)
-            the number of samples to draw
+    Parameters
+    ----------
+    vec : (numpy.ndarray, float)
+        the weights for each index
+    nsample : (unsigned int)
+        the number of samples to draw
 
-        Returns
-        -------
-        (numpy.ndarray, unsigned int)
-            indices of chosen elements (duplicates are possible)
+    Returns
+    -------
+    (numpy.ndarray, unsigned int)
+        indices of chosen elements (duplicates are possible)
     """
 
     if nsample == 0:
@@ -94,75 +187,54 @@ def sys_resample(vec, nsample):
     return numpy.searchsorted(intervals, rand_points)
 
 
-def compress_sparse_vector(vec_idx, vec_vals, m_nonzero, take_abs=True):
-    """Compresses a sparse vector according to the FRI framework.
-
-        Parameters
-        ----------
-        vec_idx : (numpy.ndarray, unsigned int)
-            the indices of nonzero elements in the input vector. Multi-indexing
-            is allowed, with each row denoting a multi-index. It is assumed
-            that there are no duplicate rows in vec_idx.
-        vec_vals : (numpy.ndarray, float)
-            the values of nonzero elements in the input vector
-        m_nonzero : (unsigned int)
-            the desired number of nonzero elements in the output vector
-        take_abs : (bool)
-            If False, it is assumed that all of the elements of vec_vals are
-            real and nonnegative.
-
-        Returns
-        -------
-        (numpy.ndarray)
-            indices of nonzero elements in the resulting vector
-        (numpy.ndarray)
-            values of nonzero elements in the resulting vector
+def sys_subd(weights, counts, sub_weights, nsample):
+    """Performs systematic resampling on a vector of weights subdivided
+    according to counts and sub_weights
+    Parameters
+    ----------
+    weights : (numpy.ndarray, float)
+        vector of weights to be subdivided. weights.shape[0] must equal
+        counts.shape[0] + sub_weights.shape[0]
+    counts : (numpy.ndarray, unsigned int)
+        the first counts.shape[0] elements of weights are subdivided into
+    sub_weights : (numpy.ndarray, float)
+        sub_weights[i] corresponds to the subdivisions of weights[i].
+        Must be row-normalized
+    n_sample : (unsigned int)
+        number of samples to draw
+    Returns
+    -------
+    (numpy.ndarray, unsigned int)
+        2-D array of chosen indices. The 0th column is the index in
+        the weights vector, and the 1st is the index with the
+        subdivision.
     """
 
-    initial_n = vec_idx.shape[0]
-    if initial_n < m_nonzero:
-        return vec_idx, vec_vals
-    num_to_sample = numpy.minimum(m_nonzero, initial_n)
+    if nsample == 0:
+        return numpy.empty((0, 2), dtype=numpy.uint32)
 
-    if take_abs:
-        vec_abs = numpy.abs(vec_vals)
-    else:
-        vec_abs = numpy.copy(vec_vals)
+    rand_points = (numpy.arange(0, 1, 1. / nsample) +
+                   numpy.random.uniform(high=1. / nsample))
+    rand_points = rand_points[:nsample]
+    big_intervals = numpy.cumsum(weights)
+    one_norm = big_intervals[-1]
+    # normalize if necessary
+    if abs(one_norm - 1.) > 1e-10:
+        big_intervals /= one_norm
 
-    preserve_idx = numpy.zeros(initial_n, dtype=bool)
+    ret_idx = numpy.zeros([nsample, 2], dtype=numpy.uint32)
+    weight_idx = misc_c_utils.linsearch_1D(big_intervals, rand_points)
+    ret_idx[:, 0] = weight_idx
+    rand_points[weight_idx > 0] -= big_intervals[weight_idx[weight_idx > 0] - 1]
+    rand_points *= one_norm / weights[weight_idx]
 
-    big_idx = _get_largest_idx(vec_abs, num_to_sample)
-    tau = big_idx.shape[0]
+    n_uni_wts = counts.shape[0]
+    uni_points = weight_idx < n_uni_wts
+    num_uni = numpy.sum(uni_points)
+    ret_idx[:num_uni, 1] = rand_points[:num_uni] * counts[weight_idx[:num_uni]]
 
-    preserve_idx[big_idx] = True
+    subweight_idx = misc_c_utils.linsearch_2D(sub_weights, weight_idx[num_uni:] - n_uni_wts,
+                                              rand_points[num_uni:])
+    ret_idx[num_uni:, 1] = subweight_idx
+    return ret_idx
 
-    vec_abs[big_idx] = 0
-    vec_norm = vec_abs.sum()
-    chosen_idx = sys_resample(vec_abs / vec_norm, num_to_sample - tau)
-    preserve_idx[chosen_idx] = True
-    resamp_weight = vec_norm / (num_to_sample - tau)
-
-    out_idx = vec_idx[preserve_idx]
-
-    vec_abs[big_idx] = vec_vals[big_idx]
-    if take_abs:
-        vec_abs[chosen_idx] = numpy.sign(vec_vals[chosen_idx]) * resamp_weight
-    else:
-        vec_abs[chosen_idx]
-
-    return out_idx, vec_abs[preserve_idx]
-
-
-def _get_largest_idx(vec_abs_el, n_sample):
-    # Calculate the indices of the elements in the weights vector that are to
-    # preserved exactly, according to eq. 42 in the FRI paper.
-
-    vec_len = vec_abs_el.shape[0]
-    srt_idx = vec_abs_el.argsort()  # ascending order
-    srt_weights = vec_abs_el[srt_idx]
-    lhs = numpy.cumsum(srt_weights)  # LHS of inequality in eq 42
-    rhs = numpy.linspace(n_sample - vec_len + 1, n_sample, num=vec_len,
-                         dtype=int) * srt_weights  # RHS of inequality in eq 42
-    compare_vec = lhs >= rhs
-    tau = vec_len - numpy.sum(compare_vec)
-    return srt_idx[(vec_len - tau):]

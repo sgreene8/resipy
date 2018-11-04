@@ -19,7 +19,7 @@ running:
 
 > make
 
-This will give you the libdcmt.a file, which is needed to compile the resipy
+This will give the libdcmt.a file, which is needed to compile the resipy
 module.
 
 Further information about the included Mersenne-Twister library may be found at

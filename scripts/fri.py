@@ -9,9 +9,9 @@ import argparse
 from resipy import fci_utils
 from resipy import fci_c_utils
 from resipy import sparse_vector
-from resipy import near_uniform
 from resipy import compress_utils
 from resipy import io_utils
+from resipy import fri_near_uni
 
 
 def main():
@@ -35,37 +35,56 @@ def main():
     results = io_utils.setup_results(args.result_int, args.result_dir,
                                      args.rayleigh, False)
 
-    if args.prob_dist == "near_uniform":
+    if args.sampl_mode != "all" and args.dist == "near_uniform":
+        from resipy import near_uniform
         n_doub_ref = fci_utils.count_doubex(occ_orbs[0], symm, symm_lookup)
         n_sing_ref = fci_utils.count_singex(
             hf_det, occ_orbs[0], symm, symm_lookup)
         p_doub = n_doub_ref * 1.0 / (n_sing_ref + n_doub_ref)
+    elif args.sampl_mode != "all" and args.dist == "heat-bath":
+        from resipy import heat_bath
+        hb_probs = heat_bath.set_up(args.frozen, eris)
 
     rngen_ptrs = near_uniform.initialize_mt(args.procs)
 
     # Elements in the HF column of FCI matrix
-    hf_col = fci_utils.gen_hf_ex(hf_det, occ_orbs[0], n_orb, symm, eris, args.frozen)
+    hf_col = fci_utils.gen_hf_ex(
+        hf_det, occ_orbs[0], n_orb, symm, eris, args.frozen)
+
+    # deter_dets = numpy.load('../../../Working Code/deterministic_Results/sol_dets.npy')
+    # full_hamil = numpy.load('../../../Working Code/deterministic_Results/hamil.npy')
 
     for iterat in range(args.max_iter):
-        # number of samples to draw from each column
-        n_col = numpy.ceil(args.H_sample * numpy.abs(sol_vec.values)).astype(int)
-
-        if args.prob_dist == "near_uniform" and args.sampl_mode == "multinomial":
-            n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(n_col, p_doub)
+        if args.sampl_mode == "all":
+            # Choose all double excitations
+            doub_orbs, doub_idx = fci_c_utils.all_doub_ex(
+                sol_vec.indices, occ_orbs, symm)
+            doub_probs = numpy.ones_like(doub_idx, dtype=numpy.float64)
+            # Choose all single excitations
+            sing_orbs, sing_idx = fci_c_utils.all_sing_ex(
+                sol_vec.indices, occ_orbs, symm)
+            sing_probs = numpy.ones_like(sing_idx, dtype=numpy.float64)
+        elif args.sampl_mode == "multinomial":
+            col_idx = compress_utils.sys_resample(
+                numpy.abs(sol_vec.values), args.H_sample)
+            n_col = numpy.zeros(sol_vec.values.shape[0], numpy.uint32)
+            numpy.add.at(n_col, col_idx, 1)
+        if args.dist == "near_uniform" and args.sampl_mode == "multinomial":
+            n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
+                n_col, p_doub)
             # Sample double excitations
             doub_orbs, doub_probs, doub_idx = near_uniform.doub_multin(
                 sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
             doub_probs *= p_doub * n_col[doub_idx]
             # Sample single excitations
-            sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(sol_vec.indices, occ_orbs, symm, symm_lookup,  n_sing_col, rngen_ptrs)
+            sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(
+                sol_vec.indices, occ_orbs, symm, symm_lookup, n_sing_col, rngen_ptrs)
             sing_probs *= (1 - p_doub) * n_col[sing_idx]
-        elif args.sampl_mode == "all":
-            # Choose all double excitations
-            doub_orbs, doub_idx = fci_c_utils.all_doub_ex(sol_vec.indices, occ_orbs, symm)
-            doub_probs = numpy.ones_like(doub_idx, dtype=numpy.float64)
-            # Choose all single excitations
-            sing_orbs, sing_idx = fci_c_utils.all_sing_ex(sol_vec.indices, occ_orbs, symm)
-            sing_probs = numpy.ones_like(sing_idx, dtype=numpy.float64)
+        elif args.dist == "near_uniform" and args.sampl_mode == "fri":
+            doub_orbs, doub_probs, doub_idx, sing_orbs, sing_probs, sing_idx = fri_near_uni.cmp_hier(sol_vec, args.H_sample, p_doub,
+                                                                                                     occ_orbs, symm, symm_lookup)
+        else:
+            raise RuntimeError("This sampling mode is not yet implemented for the specified distribution.")
 
         doub_matrel = fci_utils.doub_matr_el_nosgn(
             doub_orbs, eris, args.frozen)
@@ -74,10 +93,13 @@ def main():
         doub_idx = doub_idx[doub_nonz]
         doub_orbs = doub_orbs[doub_nonz]
         doub_matrel = doub_matrel[doub_nonz]
+        doub_probs = doub_probs[doub_nonz]
         # Calculate determinants and matrix elements
         doub_dets, doub_signs = fci_utils.doub_dets_parity(
             sol_vec.indices[doub_idx], doub_orbs)
-        doub_matrel *= args.epsilon / doub_probs * doub_signs * -sol_vec.values[doub_idx]
+        # origin_idx = numpy.searchsorted(deter_dets, sol_vec.indices[doub_idx])
+        doub_matrel *= args.epsilon / doub_probs * \
+            doub_signs * -sol_vec.values[doub_idx]
         # Start forming next iterate
         spawn_dets = doub_dets
         spawn_vals = doub_matrel
@@ -107,8 +129,10 @@ def main():
         one_norm = next_vec.one_norm()
         io_utils.calc_results(results, next_vec, 0, iterat, hf_col)
         next_vec.values /= one_norm
-        cmp_dets, cmp_vals = compress_utils.compress_sparse_vector(
-            next_vec.indices, next_vec.values, args.sparsity)
+        cmp_idx, cmp_vals = compress_utils.fri_1D(next_vec.values, args.sparsity)
+        cmp_dets = next_vec.indices[cmp_idx]
+        # cmp_dets, cmp_vals = compress_utils.compress_sparse_vector(
+        #     next_vec.indices, next_vec.values, args.sparsity)
         sol_vec = sparse_vector.SparseVector(cmp_dets, cmp_vals)
         occ_orbs = fci_c_utils.gen_orb_lists(cmp_dets, 2 * n_orb, args.n_elec -
                                              args.frozen, byte_nums, byte_idx)
@@ -126,14 +150,14 @@ def _parse_args():
     parser.add_argument('n_elec', type=int,
                         help="Number of electrons in the molecule")
     parser.add_argument('epsilon', type=float, help="Imaginary time step")
-    parser.add_argument('H_sample', type=int,
+    parser.add_argument('--H_sample', type=int,
                         help="Total number of off-diagonal samples to draw from the Hamiltonian matrix")
     parser.add_argument('sparsity', type=int,
                         help="Target number of nonzero elements in the solution vector")
-    parser.add_argument('prob_dist', choices=["near_uniform"],
+    parser.add_argument('sampl_mode', choices=["all", "multinomial", "fri"],
+                        help="Method for sampling off-diagonal Hamiltonian elements.")
+    parser.add_argument('--dist', choices=["near_uniform", "heat-bath"],
                         help="Probability distribution to use to select Hamiltonian off-diagonal elements")
-    parser.add_argument('sampl_mode', choices=["multinomial", "all"],
-                        help="Method for sampling elements from this probability distribution.")
     parser.add_argument('-f', '--frozen', type=int, default=0,
                         help="Number of core electrons frozen")
     parser.add_argument('-p', '--procs', type=int, default=8,
@@ -171,6 +195,12 @@ def _parse_args():
     if args.epsilon < 0:
         raise ValueError(
             "The imaginary time step (%f) must be > 0." % args.epsilon)
+
+    if args.sampl_mode != "all" and args.dist is None:
+        raise ValueError("The probability distribution must be specified if sample_mode is not 'all'.")
+
+    if args.sampl_mode != "all" and args.H_sample is None:
+        raise ValueError("The number of off-diagonal Hamiltonian elements to sample must be specified if sample_mode is not 'all'.")
 
     return args
 

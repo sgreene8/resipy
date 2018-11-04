@@ -90,7 +90,7 @@ def main():
 
     # Save results to disk
     res_path = args.out_dir + mol_name
-    if os.path.isdir(res_path):
+    if not(os.path.isdir(res_path)):
         try:
             os.mkdir(res_path)
         except OSError:

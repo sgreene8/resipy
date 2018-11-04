@@ -3,7 +3,6 @@
 Subroutines for file I/O operations
 """
 import numpy
-import sparse_vector
 
 
 def setup_results(buf_len, res_dir, calc_ray, fciqmc, shift_int=0):
