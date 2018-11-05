@@ -238,3 +238,57 @@ def sys_subd(weights, counts, sub_weights, nsample):
     ret_idx[num_uni:, 1] = subweight_idx
     return ret_idx
 
+
+def round_binomially(vec, num_round):
+    """Round non-integer entries in vec to integer entries in b such that
+        b[i] ~ (binomial(num_round[i], vec[i] - floor(vec[i])) + floor(vec[i])
+                * num_round)
+        Parameters
+        ----------
+        vec : (numpy.ndarray, float)
+            non-integer numbers to be rounded
+        num_round : (numpy.ndarray, unsigned int)
+            parameter of the binomial distribution for each entry in vec, must
+            have same shape as vec
+        Returns
+        -------
+        (numpy.ndarray, int)
+            integer array of results
+    """
+
+    flr_vec = numpy.floor(vec)
+    flr_vec = flr_vec.astype(int)
+    b = flr_vec * num_round + numpy.random.binomial(num_round, vec - flr_vec)
+    return b
+
+
+def sample_alias(alias, Q, row_idx):
+    """Perform multinomial sampling using the alias method for an array of
+        probability distributions.
+        Parameters
+        ----------
+        alias : (numpy.ndarray, unsigned int)
+            alias indices as calculated in cyth_helpers2.setup_alias
+        Q : (numpy.ndarray, float)
+            alias probabilities as calculated in cyth_helpers2.setup_alias
+        row_idx : (numpy.ndarray, unsigned int)
+            Row index in alias/Q of each value to sample. Can be obtained from
+            desired numbers of samples using cyth_helpers2.ind_from_count()
+        Returns
+        -------
+        (numpy.ndarray, unsigned char)
+            1-D array of chosen column indices of each sample
+    """
+
+    n_states = alias.shape[1]
+    tot_samp = row_idx.shape[0]
+    r_ints = numpy.random.randint(n_states, size=tot_samp)
+    orig_success = numpy.random.binomial(1, Q[row_idx, r_ints])
+    orig_idx = orig_success == 1
+    alias_idx = numpy.logical_not(orig_idx)
+
+    choices = numpy.zeros(tot_samp, dtype=numpy.uint)
+    choices[orig_idx] = r_ints[orig_idx]
+    choices[alias_idx] = alias[row_idx[alias_idx], r_ints[alias_idx]]
+    choices = choices.astype(numpy.uint8)
+    return choices
