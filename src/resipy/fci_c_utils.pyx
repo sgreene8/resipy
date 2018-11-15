@@ -36,10 +36,11 @@ def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec
         indices of occupied orbitals for each determinant
     """
     
-    cdef unsigned int n_dets = dets.shape[0]
+    cdef size_t n_dets = dets.shape[0]
     cdef numpy.ndarray[numpy.uint8_t, ndim=2] occ_orbs = numpy.zeros([n_dets, num_elec], 
                                                                       dtype=numpy.uint8)
-    cdef unsigned int det_idx, byte_idx, elec_idx
+    cdef unsigned int byte_idx, elec_idx
+    cdef size_t det_idx
     cdef long long curr_det, mask = 255
     cdef unsigned int num_bytes = num_orb / 8
     cdef unsigned char n_elec, det_byte, bit_idx
@@ -87,12 +88,13 @@ def single_dets_matrel(numpy.ndarray[numpy.int64_t] dets,
         number of core electrons frozen in the calculation
     '''
     cdef unsigned int n_elec = occ_orbs.shape[1]
-    cdef unsigned int n_dets = dets.shape[0]
+    cdef size_t n_dets = dets.shape[0]
     cdef unsigned int n_orb = eris.shape[0]
     cdef numpy.ndarray[numpy.float64_t] matrix_el = numpy.zeros(n_dets, 
                                                             dtype=numpy.float64)
     cdef double matr_sum
-    cdef unsigned int i, j, occ_spa, unocc_spa, occ_spin
+    cdef size_t i
+    cdef unsigned int j, occ_spa, unocc_spa, occ_spin
     cdef unsigned int eris_idx = 0
     cdef unsigned int half_frz = n_frozen / 2
     
@@ -156,7 +158,8 @@ def diag_matrel(unsigned char[:,:] occ_orbs, double[:,:] hcore,
     cdef unsigned int n_orb = eris.shape[0]
     cdef numpy.ndarray[numpy.float64_t] matrix_el = numpy.zeros(num_dets, dtype=numpy.float64)
     cdef double matr_sum
-    cdef unsigned int i, j, k, elec_1, elec_2
+    cdef size_t i
+    cdef unsigned int j, k, elec_1, elec_2
     
     for i in prange(num_dets, nogil=True, schedule=static):
         matr_sum = 0.
@@ -216,12 +219,12 @@ def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[n
         Index of the origin determinant of each excitation in the dets array
     """
 
-    cdef unsigned int det_idx
-    cdef unsigned long num_dets = occ_orbs.shape[0]
+    cdef size_t det_idx
+    cdef size_t num_dets = occ_orbs.shape[0]
     cdef unsigned int num_elec = occ_orbs.shape[1]
     cdef unsigned int num_orb = orb_symm.shape[0]
     cdef unsigned int num_sing_ex = num_elec * (num_orb - num_elec / 2)
-    cdef unsigned int tot_sampl = num_dets * num_sing_ex
+    cdef size_t tot_sampl = num_dets * num_sing_ex
     
     cdef numpy.ndarray[numpy.uint8_t, ndim=2] chosen_orbs = numpy.zeros([tot_sampl, 2], 
                                                                         dtype=numpy.uint8)
@@ -284,7 +287,7 @@ def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[n
         Index of the origin determinant of each excitation in the dets array
     """
 
-    cdef unsigned int det_idx
+    cdef size_t det_idx
     cdef unsigned long num_dets = occ_orbs.shape[0]
     cdef unsigned int num_elec = occ_orbs.shape[1]
     cdef unsigned int num_orb = orb_symm.shape[0]

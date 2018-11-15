@@ -1,7 +1,7 @@
 #!/usr/bin/env python2
 """
 Script for running an FCIQMC calculation.
-For help, run  python fciqmc.py -h
+For help, run  python fri.py -h
 """
 
 import numpy
@@ -11,11 +11,12 @@ from resipy import fci_c_utils
 from resipy import sparse_vector
 from resipy import compress_utils
 from resipy import io_utils
-from resipy import fri_near_uni
+from resipy import near_uniform
 
 
 def main():
     args = _parse_args()
+    _describe_args(args)
 
     h_core, eris, symm, hf_en = io_utils.read_in_hf(args.hf_path, args.frozen)
 
@@ -31,28 +32,28 @@ def main():
     sol_vec = sparse_vector.SparseVector(ini_idx, numpy.array([1.]))
     occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, 2 * n_orb, args.n_elec -
                                          args.frozen, byte_nums, byte_idx)
+    last_norm = 1.
+    en_shift = 0.
 
     results = io_utils.setup_results(args.result_int, args.result_dir,
                                      args.rayleigh, False)
 
-    if args.sampl_mode != "all" and args.dist == "near_uniform":
-        from resipy import near_uniform
+    if args.sampl_mode != "all":
         n_doub_ref = fci_utils.count_doubex(occ_orbs[0], symm, symm_lookup)
         n_sing_ref = fci_utils.count_singex(
             hf_det, occ_orbs[0], symm, symm_lookup)
         p_doub = n_doub_ref * 1.0 / (n_sing_ref + n_doub_ref)
-    elif args.sampl_mode != "all" and args.dist == "heat-bath":
+    if args.sampl_mode != "all" and args.dist == "heat-bath_PP":
         from resipy import heat_bath
-        hb_probs = heat_bath.set_up(args.frozen, eris)
+        occ1_probs, occ2_probs, exch_probs = heat_bath.set_up(args.frozen, eris)
+    if args.sampl_mode == "fri" and args.dist == "near_uniform":
+        from resipy import fri_near_uni
 
     rngen_ptrs = near_uniform.initialize_mt(args.procs)
 
     # Elements in the HF column of FCI matrix
     hf_col = fci_utils.gen_hf_ex(
         hf_det, occ_orbs[0], n_orb, symm, eris, args.frozen)
-
-    # deter_dets = numpy.load('../../../Working Code/deterministic_Results/sol_dets.npy')
-    # full_hamil = numpy.load('../../../Working Code/deterministic_Results/hamil.npy')
 
     for iterat in range(args.max_iter):
         if args.sampl_mode == "all":
@@ -69,20 +70,30 @@ def main():
                 numpy.abs(sol_vec.values), args.H_sample)
             n_col = numpy.zeros(sol_vec.values.shape[0], numpy.uint32)
             numpy.add.at(n_col, col_idx, 1)
-        if args.dist == "near_uniform" and args.sampl_mode == "multinomial":
             n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
                 n_col, p_doub)
-            # Sample double excitations
-            doub_orbs, doub_probs, doub_idx = near_uniform.doub_multin(
-                sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
-            doub_probs *= p_doub * n_col[doub_idx]
+
+        if args.sampl_mode == "multinomial":
             # Sample single excitations
             sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(
                 sol_vec.indices, occ_orbs, symm, symm_lookup, n_sing_col, rngen_ptrs)
             sing_probs *= (1 - p_doub) * n_col[sing_idx]
+        if args.dist == "near_uniform" and args.sampl_mode == "multinomial":
+            # Sample double excitations
+            doub_orbs, doub_probs, doub_idx = near_uniform.doub_multin(
+                sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
+            doub_probs *= p_doub * n_col[doub_idx]
         elif args.dist == "near_uniform" and args.sampl_mode == "fri":
+            # Compress both excitations
             doub_orbs, doub_probs, doub_idx, sing_orbs, sing_probs, sing_idx = fri_near_uni.cmp_hier(sol_vec, args.H_sample, p_doub,
                                                                                                      occ_orbs, symm, symm_lookup)
+        elif args.dist == "heat-bath_PP" and args.sampl_mode == "multinomial":
+            # Sample double excitations
+            doub_orbs, doub_probs, doub_idx = heat_bath.doub_multin(
+                occ1_probs, occ2_probs, exch_probs, sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col)
+            doub_probs *= p_doub * n_col[doub_idx]
+        elif args.dist == "heat-bath_PP" and args.sampl_mode == "fri":
+            pass
         else:
             raise RuntimeError("This sampling mode is not yet implemented for the specified distribution.")
 
@@ -111,6 +122,7 @@ def main():
         sing_idx = sing_idx[sing_nonz]
         sing_dets = sing_dets[sing_nonz]
         sing_matrel = sing_matrel[sing_nonz]
+        sing_probs = sing_probs[sing_nonz]
         # Calculate determinants and matrix elements
         sing_matrel *= args.epsilon / sing_probs * -sol_vec.values[sing_idx]
         # Add to next iterate
@@ -119,7 +131,7 @@ def main():
 
         # Diagonal matrix elements
         diag_matrel = fci_c_utils.diag_matrel(
-            occ_orbs, h_core, eris, args.frozen) - hf_en
+            occ_orbs, h_core, eris, args.frozen) - hf_en - en_shift
         diag_matrel = 1 - args.epsilon * diag_matrel
         diag_matrel *= sol_vec.values
         next_vec = sparse_vector.SparseVector(sol_vec.indices, diag_matrel)
@@ -128,7 +140,10 @@ def main():
         next_vec.add(spawn_dets, spawn_vals)
         one_norm = next_vec.one_norm()
         io_utils.calc_results(results, next_vec, 0, iterat, hf_col)
-        next_vec.values /= one_norm
+        # next_vec.values /= one_norm
+        en_shift -= 0.05 * numpy.log(one_norm / last_norm)
+        last_norm = one_norm
+
         cmp_idx, cmp_vals = compress_utils.fri_1D(next_vec.values, args.sparsity)
         cmp_dets = next_vec.indices[cmp_idx]
         # cmp_dets, cmp_vals = compress_utils.compress_sparse_vector(
@@ -156,10 +171,16 @@ def _parse_args():
                         help="Target number of nonzero elements in the solution vector")
     parser.add_argument('sampl_mode', choices=["all", "multinomial", "fri"],
                         help="Method for sampling off-diagonal Hamiltonian elements.")
-    parser.add_argument('--dist', choices=["near_uniform", "heat-bath"],
+    parser.add_argument('--dist', choices=["near_uniform", "heat-bath_PP"],
                         help="Probability distribution to use to select Hamiltonian off-diagonal elements")
     parser.add_argument('-f', '--frozen', type=int, default=0,
                         help="Number of core electrons frozen")
+    parser.add_argument('-s', '--initial_shift', type=float, default=0.,
+                        help="Initial energy shift (S) for controlling normalization")
+    parser.add_argument('-a', '--interval', type=int, default=10,
+                        help="Period with which to update the energy shift (A).")
+    parser.add_argument('-d', '--damping', type=float, default=0.05,
+                        help="Damping parameter for shift updates (xi)")
     parser.add_argument('-p', '--procs', type=int, default=8,
                         help="Number of processors to use for multithreading")
     parser.add_argument('-r', '--result_int', type=int, default=1000,
@@ -193,8 +214,7 @@ def _parse_args():
             "Number of electrons to freeze (%d) must be >= 0." % args.frozen)
 
     if args.epsilon < 0:
-        raise ValueError(
-            "The imaginary time step (%f) must be > 0." % args.epsilon)
+        args.epsilon *= -1
 
     if args.sampl_mode != "all" and args.dist is None:
         raise ValueError("The probability distribution must be specified if sample_mode is not 'all'.")
@@ -203,6 +223,18 @@ def _parse_args():
         raise ValueError("The number of off-diagonal Hamiltonian elements to sample must be specified if sample_mode is not 'all'.")
 
     return args
+
+
+def _describe_args(arg_dict):
+    path = arg_dict.result_dir + 'params.txt'
+    with open(path, "w") as file:
+        file.write("FRI calculation\n")
+        file.write("HF path: " + arg_dict.hf_path)
+        file.write("\nepsilon (imaginary time step): {}\n".format(arg_dict.epsilon))
+        file.write("sparsity: {}\n".format(arg_dict.sparsity))
+        file.write("Sampling mode: {}\n".format(arg_dict.sampl_mode))
+        if arg_dict.sampl_mode != "all":
+            file.write("Number of matrix samples: {}\n".format(arg_dict.H_sample))
 
 
 if __name__ == "__main__":

@@ -26,10 +26,10 @@ def dot_sorted(long long[:] ind1, double[:] val1, long long[:] ind2, double[:] v
             dot product of vectors
     """
 
-    cdef unsigned int pos1 = 0, pos2 = 0
-    cdef unsigned int len1 = ind1.shape[0]
-    cdef unsigned int len2 = ind2.shape[0]
-    cdef unsigned int idx1, idx2
+    cdef size_t pos1 = 0, pos2 = 0
+    cdef size_t len1 = ind1.shape[0]
+    cdef size_t len2 = ind2.shape[0]
+    cdef long long idx1, idx2
     cdef double dot_prod = 0
 
     while pos1 < len1 and pos2 < len2:
@@ -67,11 +67,11 @@ def ind_from_count(unsigned int[:] counts):
 	array([0, 0, 0, 1, 2, 2, 2, 2, 3])
 """
 
-    cdef unsigned long tot_num = numpy.sum(counts)
-    cdef unsigned long num_counts = counts.shape[0]
+    cdef size_t tot_num = numpy.sum(counts)
+    cdef size_t num_counts = counts.shape[0]
     cdef numpy.ndarray[numpy.uint32_t] indices = numpy.zeros(tot_num,
                                                              dtype=numpy.uint32)
-    cdef unsigned long i, j, pos = 0
+    cdef size_t i, j, pos = 0
 
     for i in range(num_counts):
         for j in range(counts[i]):
@@ -100,11 +100,11 @@ def seq_from_count(unsigned int[:] counts):
     array([0, 1, 2, 0, 0, 1, 2, 3, 0])
     """
 
-    cdef unsigned long tot_num = numpy.sum(counts)
-    cdef unsigned long num_counts = counts.shape[0]
+    cdef size_t tot_num = numpy.sum(counts)
+    cdef size_t num_counts = counts.shape[0]
     cdef numpy.ndarray[numpy.uint32_t] indices = numpy.zeros(tot_num,
                                                              dtype=numpy.uint32)
-    cdef unsigned long i, j, pos = 0
+    cdef size_t i, j, pos = 0
 
     for i in range(num_counts):
         for j in range(counts[i]):
@@ -113,6 +113,7 @@ def seq_from_count(unsigned int[:] counts):
     return indices
 
 
+@cython.wraparound(True)
 def setup_alias(probs):
     '''Calculate the probabilities Q(i) and aliases A(i) needed to perform multinomial sampling, 
 	by the alias method, as described in Appendix D of Holmes et al. (2016).
@@ -131,7 +132,7 @@ def setup_alias(probs):
 	    of its alias.
     '''
     p_shape = probs.shape
-    probs.shape = (-1, 1)
+    probs.shape = (-1, p_shape[-1])
     alias, Q = _alias_2D(probs)
     probs.shape = p_shape
     alias.shape = p_shape
@@ -156,8 +157,8 @@ def linsearch_1D(double[:] search_list, double[:] search_vals):
     (numpy.ndarray, uint32)
         position of each search_vals[i] in search_list
     """
-    cdef unsigned int n_search = search_vals.shape[0]
-    cdef unsigned int search_idx
+    cdef size_t n_search = search_vals.shape[0]
+    cdef size_t search_idx
     cdef unsigned int search_pos = 0
     cdef numpy.ndarray[numpy.uint32_t] ret_idx = numpy.zeros(n_search, dtype=numpy.uint32)
 
@@ -171,7 +172,7 @@ def linsearch_1D(double[:] search_list, double[:] search_vals):
 def linsearch_2D(double[:, :] search_lists, unsigned int[:] row_idx,
                  double[:] search_vals):
     """Equivalent to numpy.searchsorted(search_lists[row_idx[i]], search_vals[i])
-        for all i, except that search_vals[i] cannot exceed search_lists[rpw_idx[i], -1]
+        for all i, except that search_vals[i] cannot exceed search_lists[row_idx[i], -1]
 
     Parameters
     ----------
@@ -187,8 +188,8 @@ def linsearch_2D(double[:, :] search_lists, unsigned int[:] row_idx,
     (numpy.ndarray, uint32)
         column index for each search value
     """
-    cdef unsigned int n_search = search_vals.shape[0]
-    cdef unsigned int search_idx = 0
+    cdef size_t n_search = search_vals.shape[0]
+    cdef size_t search_idx = 0
     cdef unsigned int curr_row = row_idx[0]
     cdef unsigned int curr_col = 0
     cdef double col_pos = 0.
@@ -209,9 +210,10 @@ def linsearch_2D(double[:, :] search_lists, unsigned int[:] row_idx,
 
 def _alias_2D(double[:, :] probs):
     cdef unsigned int n_s, n_b, s, b
-    cdef unsigned int num_sys = probs.shape[0]
+    cdef size_t num_sys = probs.shape[0]
     cdef unsigned int num_states = probs.shape[1]
-    cdef unsigned int i, j
+    cdef size_t i
+    cdef unsigned int j
     cdef numpy.ndarray[numpy.uint32_t, ndim = 2] aliases = numpy.zeros([num_sys, num_states], dtype=numpy.uint32)
     cdef numpy.ndarray[numpy.float64_t, ndim = 2] Q = numpy.zeros([num_sys, num_states], dtype=numpy.float64)
 
@@ -220,10 +222,11 @@ def _alias_2D(double[:, :] probs):
     cdef numpy.ndarray[numpy.uint32_t, ndim = 2] smaller = numpy.zeros([n_threads, num_states], dtype=numpy.uint32)
     cdef numpy.ndarray[numpy.uint32_t, ndim = 2] bigger = numpy.zeros([n_threads, num_states], dtype=numpy.uint32)
 
-    for j in prange(num_sys, nogil=True, schedule=dynamic, num_threads=n_threads):
+    # for j in prange(num_sys, nogil=True, schedule=dynamic, num_threads=n_threads):
+    for j in range(num_sys):
         n_s = 0
         n_b = 0
-        thread_idx = threadid()
+        thread_idx = 0#threadid()
         for i in range(num_states):
             aliases[j, i] = i
             Q[j, i] = num_states * probs[j, i]

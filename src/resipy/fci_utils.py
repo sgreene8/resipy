@@ -1,4 +1,4 @@
-#!/usr/bin/env python2ß
+#!/usr/bin/env python2
 """
 Utilities for calculating matrix elements of the FCI Hamiltonian and
 manipulating bit-string representations of Slater determinants.

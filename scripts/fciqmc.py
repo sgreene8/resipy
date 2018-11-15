@@ -13,9 +13,10 @@ from resipy import near_uniform
 from resipy import compress_utils
 from resipy import io_utils
 
-
+@profile
 def main():
     args = _parse_args()
+    _describe_args(args)
 
     h_core, eris, symm, hf_en = io_utils.read_in_hf(args.hf_path, args.frozen)
 
@@ -32,8 +33,6 @@ def main():
     sol_vec = sparse_vector.SparseVector(ini_idx, ini_val)
     occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, 2 * n_orb, args.n_elec -
                                          args.frozen, byte_nums, byte_idx)
-    # one-norm of solution vector
-    n_walk = sol_vec.one_norm()
     last_nwalk = 0  # number of walkers at the time of previous shift update
     # energy shift for controlling normalization
     en_shift = args.initial_shift
@@ -41,11 +40,13 @@ def main():
     results = io_utils.setup_results(args.result_int, args.result_dir,
                                      args.rayleigh, True, args.interval)
 
-    if args.prob_dist == "near_uniform":
-        n_doub_ref = fci_utils.count_doubex(occ_orbs[0], symm, symm_lookup)
-        n_sing_ref = fci_utils.count_singex(
-            hf_det, occ_orbs[0], symm, symm_lookup)
-        p_doub = n_doub_ref * 1.0 / (n_sing_ref + n_doub_ref)
+    n_doub_ref = fci_utils.count_doubex(occ_orbs[0], symm, symm_lookup)
+    n_sing_ref = fci_utils.count_singex(
+        hf_det, occ_orbs[0], symm, symm_lookup)
+    p_doub = n_doub_ref * 1.0 / (n_sing_ref + n_doub_ref)
+    if args.prob_dist == "heat-bath_PP":
+        from resipy import heat_bath
+        occ1_probs, occ2_probs, exch_probs = heat_bath.set_up(args.frozen, eris)
 
     rngen_ptrs = near_uniform.initialize_mt(args.procs)
 
@@ -57,48 +58,52 @@ def main():
         # number of samples to draw from each column
         n_col = numpy.abs(sol_vec.values)
 
+        n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
+            n_col, p_doub)
+        # Sample single excitations
+        sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(
+            sol_vec.indices, occ_orbs, symm, symm_lookup,  n_sing_col, rngen_ptrs)
+
+        # Sample double excitations
         if args.prob_dist == "near_uniform":
-            n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
-                n_col, p_doub)
-            # Sample double excitations
             doub_orbs, doub_probs, doub_idx = near_uniform.doub_multin(
                 sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
-            # Compress chosen elements
-            doub_matrel = fci_utils.doub_matr_el_nosgn(
-                doub_orbs, eris, args.frozen)
-            doub_matrel *= args.epsilon / doub_probs / p_doub
-            doub_matrel = compress_utils.round_binomially(doub_matrel, 1)
-            # Retain nonzero elements
-            doub_nonz = doub_matrel != 0
-            doub_idx = doub_idx[doub_nonz]
-            doub_orbs = doub_orbs[doub_nonz]
-            doub_matrel = doub_matrel[doub_nonz]
-            # Calculate determinants and matrix elements
-            doub_dets, doub_signs = fci_utils.doub_dets_parity(
-                sol_vec.indices[doub_idx], doub_orbs)
-            doub_matrel *= doub_signs * -numpy.sign(sol_vec.values[doub_idx])
-            # Start forming next iterate
-            spawn_dets = doub_dets
-            spawn_vals = doub_matrel
+        elif args.prob_dist == "heat-bath_PP":
+            doub_orbs, doub_probs, doub_idx = heat_bath.doub_multin(
+                occ1_probs, occ2_probs, exch_probs, sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col)
+        else:
+            print("Invalid probability distribution chosen")
 
-            # Sample single excitations
-            sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(
-                sol_vec.indices, occ_orbs, symm, symm_lookup,  n_sing_col, rngen_ptrs)
-            sing_dets, sing_matrel = fci_c_utils.single_dets_matrel(
-                sol_vec.indices[sing_idx], sing_orbs, eris, h_core, occ_orbs[sing_idx], args.frozen)
-            # Compress chosen elements
-            sing_matrel *= args.epsilon / sing_probs / (1 - p_doub)
-            sing_matrel = compress_utils.round_binomially(sing_matrel, 1)
-            # Retain nonzero elements
-            sing_nonz = sing_matrel != 0
-            sing_idx = sing_idx[sing_nonz]
-            sing_dets = sing_dets[sing_nonz]
-            sing_matrel = sing_matrel[sing_nonz]
-            # Calculate determinants and matrix elements
-            sing_matrel *= -numpy.sign(sol_vec.values[sing_idx])
-            # Add to next iterate
-            spawn_dets = numpy.append(spawn_dets, sing_dets)
-            spawn_vals = numpy.append(spawn_vals, sing_matrel)
+        # Compress double elements
+        doub_matrel = fci_utils.doub_matr_el_nosgn(doub_orbs, eris, args.frozen)
+        doub_matrel *= args.epsilon / doub_probs / p_doub
+        doub_matrel = compress_utils.round_binomially(doub_matrel, 1)
+
+        doub_nonz = doub_matrel != 0
+        doub_idx = doub_idx[doub_nonz]
+        doub_orbs = doub_orbs[doub_nonz]
+        doub_matrel = doub_matrel[doub_nonz]
+
+        doub_dets, doub_signs = fci_utils.doub_dets_parity(
+            sol_vec.indices[doub_idx], doub_orbs)
+        doub_matrel *= doub_signs * -numpy.sign(sol_vec.values[doub_idx])
+
+        # Compress single elements
+        sing_dets, sing_matrel = fci_c_utils.single_dets_matrel(
+            sol_vec.indices[sing_idx], sing_orbs, eris, h_core, occ_orbs[sing_idx], args.frozen)
+        sing_matrel *= args.epsilon / sing_probs / (1 - p_doub)
+        sing_matrel = compress_utils.round_binomially(sing_matrel, 1)
+
+        sing_nonz = sing_matrel != 0
+        sing_idx = sing_idx[sing_nonz]
+        sing_dets = sing_dets[sing_nonz]
+        sing_matrel = sing_matrel[sing_nonz]
+
+        sing_matrel *= -numpy.sign(sol_vec.values[sing_idx])
+
+        spawn_dets = numpy.append(doub_dets, sing_dets)
+        spawn_vals = numpy.append(doub_matrel, sing_matrel)
+
         # Diagonal matrix elements
         diag_matrel = fci_c_utils.diag_matrel(
             occ_orbs, h_core, eris, args.frozen) - en_shift - hf_en
@@ -115,13 +120,13 @@ def main():
         occ_orbs = fci_c_utils.gen_orb_lists(next_vec.indices, 2 * n_orb, args.n_elec -
                                              args.frozen, byte_nums, byte_idx)
         n_walk = next_vec.one_norm()
-        en_shift, last_nwalk = adjust_shift(
+        en_shift, last_nwalk = _adjust_shift(
             en_shift, n_walk, last_nwalk, args.walker_target, args.damping / args.interval / args.epsilon)
         io_utils.calc_results(results, next_vec, en_shift, iterat, hf_col)
         sol_vec = next_vec
 
 
-def adjust_shift(shift, n_walkers, last_walkers, target_walkers, damp_factor):
+def _adjust_shift(shift, n_walkers, last_walkers, target_walkers, damp_factor):
     """
     Adjust the constant energy shift used to control normalization
     """
@@ -147,7 +152,7 @@ def _parse_args():
     parser.add_argument('epsilon', type=float, help="Imaginary time step")
     parser.add_argument('walker_target', type=int,
                         help="Target number of walkers, must be greater than the plateau value for this system")
-    parser.add_argument('prob_dist', choices=["near_uniform"],
+    parser.add_argument('prob_dist', choices=["near_uniform", "heat-bath_PP"],
                         help="Probability distribution to use to select Hamiltonian off-diagonal elements")
     parser.add_argument('-f', '--frozen', type=int, default=0,
                         help="Number of core electrons frozen")
@@ -204,6 +209,15 @@ def _parse_args():
             args.result_int, args.interval))
 
     return args
+
+
+def _describe_args(arg_dict):
+    path = arg_dict.result_dir + 'params.txt'
+    with open(path, "w") as file:
+        file.write("FCIQMC calculation\n")
+        file.write("HF path: " + arg_dict.hf_path)
+        file.write("\nepsilon (imaginary time step): {}\n".format(arg_dict.epsilon))
+        file.write("Target number of walkers: {}\n".format(arg_dict.walker_target))
 
 
 if __name__ == "__main__":

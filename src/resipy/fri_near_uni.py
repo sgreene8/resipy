@@ -1,6 +1,6 @@
 #!/usr/bin/env python2
 """
-Utilities for applying FRI-type compression to the
+Subroutine for applying FRI-type compression to the
 Near-Uniform distribution.
 """
 
@@ -11,6 +11,45 @@ import near_uniform
 
 def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
                  orb_symm, symm_lookup):
+    """Perform FRI-type compression on the Near-Uniform distribution,
+    exploiting its hierarchical structure for efficiency.
+
+    Parameters
+    ----------
+    sol_vec : (SparseVector object)
+        the current solution vector
+    n_sample : (unsigned int)
+        the desired number of nonzero matrix elements after the compression
+    p_doub : (double)
+        the probability of choosing a double excitation vs a single excitation
+    occ_orb : (numpy.ndarray, uint8)
+        The numbers in each row correspond to the indices of occupied
+        orbitals in each determinant, calculated from fci_c_utils.gen_orb_lists
+    orb_symm : (numpy.ndarray, uint8)
+        irreducible representation of each spatial orbital
+    symm_lookup : (numpy.ndarray, uint8)
+        Table of orbitals with each type of symmetry, as generated
+        by fci_utils.gen_byte_table()
+
+    Returns
+    -------
+    (numpy.ndarray, uint8) :
+        chosen occupied (0th and 1st columns) and unoccupied (2nd and 3rd
+        columns) orbitals for double excitations
+    (numpy.ndarray, float64) :
+        probability of selecting each chosen double excitation
+    (numpy.ndarray, uint32) :
+        index of the origin determinant of each chosen double excitation
+         in the dets array
+    (numpy.ndarray, uint8) :
+        chosen occupied (0th column) and unoccupied (1st column)
+        orbitals for single excitations
+    (numpy.ndarray, float64) :
+        probability of selecting each chosen single excitation
+    (numpy.ndarray, uint32) :
+        index of the origin determinant of each chosen single excitation
+         in the dets array
+    """
     symm_virt = near_uniform.virt_symm(occ_orb, orb_symm, symm_lookup)
     occ_allow, virt_allow = near_uniform.sing_allow(symm_virt, occ_orb,
                                                     orb_symm)
@@ -95,8 +134,10 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
     sing_occ = occ_orb[sing_det_idx, sing_orb_idx]
     sing_orb[:, 0] = sing_occ
     n_orb = orb_symm.shape[0]
-    sing_orb[:, 1] = near_uniform.id_sing_virt(sol_vec.indices[sing_det_idx], symm_lookup,
-                                               orb_symm[sing_occ % n_orb], (sing_occ / n_orb) * n_orb, virt_idx[sampl_idx[sing_idx]])
+    virt_choices = near_uniform.virt_symm_idx(sol_vec.indices[sing_det_idx], symm_lookup,
+                                               orb_symm[sing_occ % n_orb], (sing_occ / n_orb) * n_orb)
+    tmp_idx = numpy.arange(n_sing, dtype=numpy.uint32)
+    sing_orb[:, 1] = virt_choices[tmp_idx, virt_idx[sampl_idx[sing_idx]]]
     sing_probs = ((1 - p_doub) / occ_allow[sing_det_idx, 0] / virt_allow[sing_det_idx, sing_orb_idx]
                   * sol_vec.values[sing_det_idx] / fri_vals[sing_idx])
 

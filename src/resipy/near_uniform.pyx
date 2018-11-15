@@ -73,7 +73,7 @@ def bin_n_sing_doub(col_nsamp, p_doub):
     sing_samp = sing_samp.astype(numpy.uint32)
     return doub_samp, sing_samp
 
-
+@cython.boundscheck(False)
 def doub_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
                 unsigned char[:] orb_symm, unsigned char[:, :] lookup_tabl,
                 unsigned int[:] num_sampl, unsigned long[:] mt_ptrs):
@@ -87,12 +87,12 @@ def doub_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
         Bit string representations of all determinants to be sampled
     occ_orbs : (numpy.ndarray, uint8)
         The numbers in each row correspond to the indices of occupied
-        orbitals in each determinant, calculated from gen_orb_lists.
-    orb_symm : (numpy.ndarray, unit8)
+        orbitals in each determinant, calculated from fci_c_utils.gen_orb_lists
+    orb_symm : (numpy.ndarray, uint8)
         irreducible representation of each spatial orbital
     lookup_tabl : (numpy.ndarray, uint8)
         Table of orbitals with each type of symmetry, as generated
-        by fci_helpers2.gen_symm_lookup()
+        by fci_utils.gen_symm_lookup()
     num_sampl : (numpy.ndarray, uint32)
         number of double excitations to choose for each determinant
     mt_ptrs : (numpy.ndarray, uint64)
@@ -110,15 +110,15 @@ def doub_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
         dets array
     '''
 
-    cdef unsigned int num_dets = dets.shape[0]
+    cdef size_t num_dets = dets.shape[0]
     cdef unsigned int num_elec = occ_orbs.shape[1]
     cdef unsigned int num_orb = orb_symm.shape[0]
-    cdef unsigned int i, det_idx
-    cdef unsigned int a_symm, b_symm, a_spin, b_spin, sym_prod
+    cdef size_t det_idx
+    cdef unsigned int i, a_symm, b_symm, a_spin, b_spin, sym_prod
     cdef unsigned int unocc1, unocc2, m_a_allow, m_a_b_allow, m_b_a_allow
     cdef orb_pair occ
     cdef long long curr_det
-    cdef unsigned int tot_sampl = 0
+    cdef size_t tot_sampl = 0
     cdef double prob
     cdef numpy.ndarray[numpy.uint32_t] start_idx = numpy.zeros(num_dets, dtype=numpy.uint32)
     cdef unsigned int thread_idx, n_threads = mt_ptrs.shape[0]
@@ -126,16 +126,17 @@ def doub_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
     cdef unsigned int[:, :, :] unocc_sym_counts = numpy.zeros([n_threads, 2, n_symm], dtype=numpy.uint32)
     cdef mt_struct *mts
 
-    for i in range(num_dets):
-        start_idx[i] = tot_sampl
-        tot_sampl += num_sampl[i]
+    for det_idx in range(num_dets):
+        start_idx[det_idx] = tot_sampl
+        tot_sampl += num_sampl[det_idx]
 
     cdef numpy.ndarray[numpy.uint8_t, ndim=2] chosen_orbs = numpy.zeros([tot_sampl, 4],
                                                                         dtype=numpy.uint8)
     cdef numpy.ndarray[numpy.float64_t] prob_vec = numpy.zeros(tot_sampl)
     cdef numpy.ndarray[numpy.uint32_t] idx_arr = numpy.zeros(tot_sampl, dtype=numpy.uint32)
 
-    for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
+    # for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
+    for det_idx in range(num_dets):
         if (num_sampl[det_idx] == 0):
             continue
         tot_sampl = start_idx[det_idx]
@@ -211,12 +212,12 @@ def virt_symm(unsigned char[:, :] occ_orbs, unsigned char[:] orb_symm,
         Bit string representations of the determinants in question
     occ_orbs : (numpy.ndarray, uint8)
         The numbers in each row correspond to the indices of occupied
-        orbitals in each determinant, calculated from gen_orb_lists.
-    orb_symm : (numpy.ndarray, unit8)
+        orbitals in each determinant
+    orb_symm : (numpy.ndarray, uint8)
         irreducible representation of each spatial orbital
     lookup_tabl : (numpy.ndarray, uint8)
         Table of orbitals with each type of symmetry, as generated
-        by fci_helpers2.gen_symm_lookup()
+        by fci_utils.gen_symm_lookup()
     Returns
     -------
     (numpy.ndarray, uint8)
@@ -224,9 +225,9 @@ def virt_symm(unsigned char[:, :] occ_orbs, unsigned char[:] orb_symm,
         the 1st representing the spin, and the 2nd the spatial irrep
         index.
     '''
-    cdef unsigned int num_dets = occ_orbs.shape[0]
+    cdef size_t num_dets = occ_orbs.shape[0]
     cdef unsigned int n_symm = lookup_tabl.shape[0]
-    cdef unsigned int det_idx
+    cdef size_t det_idx
     cdef numpy.ndarray[numpy.uint32_t, ndim=3] virt_counts = numpy.zeros([num_dets, 2, n_symm], dtype=numpy.uint32)
 
     for det_idx in range(num_dets):
@@ -246,8 +247,8 @@ def sing_allow(unsigned int[:, :, :] virt_counts, unsigned char[:, :] occ_orbs,
         The number of virtual orbitals with each irrep in each determinant
     occ_orbs : (numpy.ndarray, uint8)
         The numbers in each row correspond to the indices of occupied
-        orbitals in each determinant, calculated from gen_orb_lists.
-    orb_symm : (numpy.ndarray, unit8)
+        orbitals in each determinant, calculated from fci_c_utils.gen_orb_lists
+    orb_symm : (numpy.ndarray, uint8)
         irreducible representation of each spatial orbital
     Returns
     -------
@@ -259,12 +260,14 @@ def sing_allow(unsigned int[:, :, :] virt_counts, unsigned char[:, :] occ_orbs,
         2-D array with number of virtual orbitals that can be chosen
         for each occupied orbital
     '''
-    cdef unsigned int num_dets = occ_orbs.shape[0]
+    cdef size_t num_dets = occ_orbs.shape[0]
     cdef unsigned int num_elec = occ_orbs.shape[1]
     cdef unsigned int num_orb = orb_symm.shape[0]
     cdef numpy.ndarray[numpy.uint8_t, ndim=2] occ_allow = numpy.zeros([num_dets, num_elec + 1], dtype=numpy.uint8)
     cdef numpy.ndarray[numpy.uint8_t, ndim=2] n_virt = numpy.zeros([num_dets, num_elec], dtype=numpy.uint8)
-    cdef unsigned int det_idx, elec_idx, num_allowed, symm_allowed
+    cdef size_t det_idx
+    cdef unsigned int elec_idx, num_allowed, symm_allowed
+    cdef unsigned char occ_symm
 
     for det_idx in range(num_dets):
         num_allowed = 0
@@ -293,8 +296,8 @@ def symm_pair_wt(unsigned int[:, :, :] virt_counts, unsigned char[:, :] occ_orbs
         the solution vector
     occ_orbs : (numpy.ndarray, uint8)
         The numbers in each row correspond to the indices of occupied
-        orbitals in each determinant, calculated from gen_orb_lists.
-    orb_symm : (numpy.ndarray, unit8)
+        orbitals in each determinant, calculated from fci_c_utils.gen_orb_lists
+    orb_symm : (numpy.ndarray, uint8)
         irreducible representation of each spatial orbital
     det_idx : (numpy.ndarray, uint32)
         The index of the determinant of each of the occupied pair choices in
@@ -312,11 +315,11 @@ def symm_pair_wt(unsigned int[:, :, :] virt_counts, unsigned char[:, :] occ_orbs
     (numpy.ndarray, uint8)
         orbitals of each occupied pair
     """
-    cdef unsigned int n_samples = opair_tri.shape[0]
+    cdef size_t n_samples = opair_tri.shape[0]
     cdef unsigned int num_orb = orb_symm.shape[0]
     cdef unsigned int n_symm = virt_counts.shape[2]
     cdef unsigned int num_elec = occ_orbs.shape[1]
-    cdef unsigned int sampl_idx
+    cdef size_t sampl_idx
     cdef unsigned char[4][8] xor_idx
     xor_idx[0][:] = [0, 1, 2, 3, 4, 5, 6, 7]
     xor_idx[1][:] = [1, 3, 5, 7, 0, 0, 0, 0]
@@ -386,12 +389,12 @@ def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
         Bit string representations of all determinants
     occ_orbs : (numpy.ndarray, uint8)
         The numbers in each row correspond to the indices of occupied
-        orbitals in each determinant, calculated from gen_orb_lists.
-    orb_symm : (numpy.ndarray, unit8)
+        orbitals in each determinant, calculated from fci_c_utils.gen_orb_lists
+    orb_symm : (numpy.ndarray, uint8)
         irreducible representation of each spatial orbital
     lookup_tabl : (numpy.ndarray, uint8)
         Table of orbitals with each type of symmetry, as generated
-        by fci_helpers2.gen_byte_table()
+        by fci_utils.gen_byte_table()
     num_sampl : (numpy.ndarray, uint64)
         number of single excitations to choose for each determinant
     mt_ptrs : (numpy.ndarray, uint64)
@@ -407,10 +410,11 @@ def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
         index of origin determinant of each choice in the dets array
     '''
 
-    cdef unsigned int num_dets = occ_orbs.shape[0]
+    cdef size_t num_dets = occ_orbs.shape[0]
     cdef unsigned int num_elec = occ_orbs.shape[1]
     cdef unsigned int num_orb = orb_symm.shape[0]
-    cdef unsigned int j, delta_s, num_allowed, det_idx
+    cdef size_t det_idx
+    cdef unsigned int j, delta_s, num_allowed
     cdef unsigned int occ_orb, occ_symm, occ_spin, virt_orb, sampl_idx
     cdef unsigned int elec_idx
     cdef unsigned int tot_sampl = 0
@@ -517,7 +521,7 @@ def id_doub_virt(long long[:] dets, unsigned char[:, :] lookup_tabl,
         Bit string representation of determinant corresponding to each choice
     lookup_tabl : (numpy.ndarray, uint8)
         Table of orbitals with each type of symmetry, as generated
-        by fci_helpers2.gen_symm_lookup()
+        by fci_utils.gen_symm_lookup()
     occ_pairs : (numpy.ndarray, uint8)
         2-D array containing the occupied orbitals of each choice
     irrep_idx : (numpy.ndarray, uint32)
@@ -532,8 +536,8 @@ def id_doub_virt(long long[:] dets, unsigned char[:, :] lookup_tabl,
     (numpy.ndarray, uint8)
         The virtual orbitals identified for each excitation
     '''
-    cdef unsigned int det_idx
-    cdef unsigned int num_dets = dets.shape[0]
+    cdef size_t det_idx
+    cdef size_t num_dets = dets.shape[0]
     cdef unsigned int n_orb = orb_symm.shape[0]
     cdef unsigned int n_symm = lookup_tabl.shape[0]
     cdef numpy.ndarray[numpy.uint8_t, ndim=2] virt_orbs = numpy.zeros([num_dets, 2],  dtype=numpy.uint8)
@@ -607,33 +611,31 @@ cdef unsigned int _find_virt(long long det, unsigned char * symm_row,
     return orbital
 
 
-def id_sing_virt(long long[:] dets, unsigned char[:, :] lookup_tabl,
-                 unsigned char[:] chosen_symm, unsigned char[:] spin_shifts,
-                 unsigned int[:] virt_idx):
-    '''Identify the virtual orbital in each determinant corresponding
-        to a specified symmetry index.
+def virt_symm_idx(long long[:] dets, unsigned char[:, :] lookup_tabl,
+                 unsigned char[:] chosen_symm, unsigned char[:] spin_shifts):
+    '''Build lists of all virtual orbitals in each of an array of determinants
+    with a particular spin and spatial symmetry.
     Parameters
     ----------
     dets : (numpy.ndarray, int64)
-        Bit string representation of determinant corresponding to each choice
+        Bit string representation of each determinant
     lookup_tabl : (numpy.ndarray, uint8)
         Table of orbitals with each type of symmetry, as generated
-        by fci_helpers2.gen_symm_lookup()
+        by fci_utils.gen_symm_lookup()
     chosen_symm : (numpy.ndarray, uint8)
-        Irrep of each choice
+        Desired spatial symmetry for each list of virtual orbitals
     spin_shifts : (numpy.ndarray, uint32)
-        Spin of each choice (0 or 1) multiplied by number of spatial orbitals
-    virt_idx : (numpy.ndarray, uint32)
-        Virtual index of each choice (i.e. finds the virt_idx[i]th virtual
-        orbital in dets[i] with chosen_symm[i])
+        Desired spin symmetry (0 or 1) multiplied by number of spatial orbitals
     Returns
     -------
     (numpy.ndarray, uint8)
-        The virtual orbitals identified
+        2-D array with values in each row corresponding to the found virtual orbitals
+        (spin included)
     '''
-    cdef unsigned int det_idx
-    cdef unsigned int num_dets = dets.shape[0]
-    cdef numpy.ndarray[numpy.uint8_t] virt_orbs = numpy.zeros(num_dets, dtype=numpy.uint8)
+    cdef size_t det_idx
+    cdef size_t num_dets = dets.shape[0]
+    cdef unsigned int n_orb = lookup_tabl.shape[1]
+    cdef numpy.ndarray[numpy.uint8_t, ndim=2] virt_orbs = numpy.zeros([num_dets, n_orb], dtype=numpy.uint8)
     cdef long long curr_det
     cdef unsigned int curr_shift
     cdef unsigned int symm_idx
@@ -646,14 +648,57 @@ def id_sing_virt(long long[:] dets, unsigned char[:, :] lookup_tabl,
         curr_det = dets[det_idx]
         curr_shift = spin_shifts[det_idx]
         symm_counter = 0
-        symm_idx = 1
-        while symm_counter <= virt_idx[det_idx]:
-            orbital = curr_shift + lookup_tabl[curr_symm, symm_idx]
+        for symm_idx in range(lookup_tabl[curr_symm, 0]):
+            orbital = curr_shift + lookup_tabl[curr_symm, symm_idx + 1]
             if not(curr_det & (<long long> 1 << orbital)):
+                virt_orbs[det_idx, symm_counter] = orbital
                 symm_counter += 1
-            symm_idx += 1
-        virt_orbs[det_idx] = orbital
     return virt_orbs
+
+
+def virt_symm_bool(long long[:] dets, unsigned char[:, :] lookup_tabl,
+                 unsigned char[:] chosen_symm, unsigned char[:] spin_shifts,
+                 unsigned int n_orb):
+    '''Calculate whether each of the spatial orbitals in a HF basis are unoccupied
+    in each of a set of determinants, and whether they have a particular spatial
+    symmetry.
+    Parameters
+    ----------
+    dets : (numpy.ndarray, int64)
+        Bit string representation of each determinant
+    lookup_tabl : (numpy.ndarray, uint8)
+        Table of orbitals with each type of symmetry, as generated
+        by fci_utils.gen_symm_lookup()
+    chosen_symm : (numpy.ndarray, uint8)
+        Irrep of spatial symmetry to test for the orbitals for each determinant
+    spin_shifts : (numpy.ndarray, uint32)
+        Spin symmetry (0 or 1) to test for each determinant, multiplied by number
+        of spatial orbitals
+    n_orb : (unsigned int)
+        Number of orbitals in the spatial HF basis
+    Returns
+    -------
+    (numpy.ndarray, bool)
+        2-D array indicating whether each spatial orbital is unoccupied and conforms
+        to the spatial and spin symmetries specified in the arguments.
+    '''
+    cdef size_t det_idx
+    cdef size_t num_dets = dets.shape[0]
+    cdef numpy.ndarray[numpy.uint8_t, ndim=2] virt_orbs = numpy.zeros([num_dets, n_orb], dtype=numpy.uint8)
+    cdef long long curr_det
+    cdef unsigned int curr_shift
+    cdef unsigned int symm_idx
+    cdef unsigned char curr_symm
+    cdef unsigned char orbital
+
+    for det_idx in range(num_dets):
+        curr_symm = chosen_symm[det_idx]
+        curr_det = dets[det_idx]
+        curr_shift = spin_shifts[det_idx]
+        for symm_idx in range(lookup_tabl[curr_symm, 0]):
+            orbital = lookup_tabl[curr_symm, symm_idx + 1]
+            virt_orbs[det_idx, orbital] = not(curr_det & (<long long> 1 << (orbital + curr_shift)))
+    return virt_orbs.astype(numpy.bool_)
 
 
 cdef void _count_symm_virt(unsigned int[:, :] counts, unsigned char[:] occ_orbs,
@@ -809,24 +854,6 @@ cdef unsigned int _doub_choose_virt2(unsigned int spin_shift, long long det,
             orb_idx -= 1
         symm_idx += 1
     return orbital
-
-
-cdef unsigned int _next_virt(unsigned int *symm_idx, unsigned char *symm_table, long long det,
-                             unsigned int spin_shift) nogil:
-    # Return the next virtual orbital in a determinant with a given symmetry and spin, or
-    # -1 if none can be found
-    cdef unsigned int idx = symm_idx[0]
-    idx += 1
-    if (idx == (symm_table[0] + 1)):
-        return -1
-    cdef unsigned int virt_orb = symm_table[idx] + spin_shift
-    while (det & (<long long> 1 << virt_orb)):
-        idx += 1
-        if (idx == (symm_table[0] + 1)):
-            return -1
-        virt_orb = symm_table[idx] + spin_shift
-    symm_idx[0] = idx
-    return virt_orb
 
 
 cdef unsigned int _choose_uint(mt_struct *mt_ptr, unsigned int nmax) nogil:
