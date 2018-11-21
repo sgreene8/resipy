@@ -5,6 +5,7 @@ Utilities for performing stochastic matrix and vector compressions.
 
 import numpy
 import misc_c_utils
+import near_uniform
 
 
 def fri_subd(vec, num_div, sub_weights, n_samp):
@@ -113,7 +114,7 @@ def fri_1D(vec, n_samp):
     one_norm = weights.sum()
 
     if abs(one_norm) > 1e-10:
-        sampl_idx = sys_resample(weights, n_samp)
+        sampl_idx = sys_resample(weights, n_samp, ret_idx=True)
         new_vec[sampl_idx] = one_norm / n_samp * numpy.sign(vec[sampl_idx])
 
     nonz_idx = numpy.nonzero(new_vec)[0]
@@ -158,7 +159,7 @@ def _keep_idx(weights, num_div, sub_weights, n_samp):
     return uni_keep, nonuni_keep
 
 
-def sys_resample(vec, nsample):
+def sys_resample(vec, nsample, ret_idx=False, ret_counts=False):
     """Choose nsample elements of vector vec according to systematic resampling
         algorithm (eq. 44-46 in SIAM Rev. 59 (2017), 547-587)
 
@@ -184,7 +185,12 @@ def sys_resample(vec, nsample):
     # normalize if necessary
     if intervals[-1] != 1.:
         intervals /= intervals[-1]
-    return numpy.searchsorted(intervals, rand_points)
+    ret_tuple = ()
+    if ret_idx:
+        ret_tuple = ret_tuple + (misc_c_utils.linsearch_1D(intervals, rand_points),)
+    if ret_counts:
+        ret_tuple = ret_tuple + (misc_c_utils.linsearch_1D_cts(intervals, rand_points),)
+    return ret_tuple
 
 
 def sys_subd(weights, counts, sub_weights, nsample):
@@ -239,51 +245,77 @@ def sys_subd(weights, counts, sub_weights, nsample):
     return ret_idx
 
 
-def round_binomially(vec, num_round):
+def round_binomially(vec, num_round, mt_ptrs):
     """Round non-integer entries in vec to integer entries in b such that
-        b[i] ~ (binomial(num_round[i], vec[i] - floor(vec[i])) + floor(vec[i])
-                * num_round)
-        Parameters
-        ----------
-        vec : (numpy.ndarray, float)
-            non-integer numbers to be rounded
-        num_round : (numpy.ndarray, unsigned int)
-            parameter of the binomial distribution for each entry in vec, must
-            have same shape as vec
-        Returns
-        -------
-        (numpy.ndarray, int)
-            integer array of results
+    b[i] ~ (binomial(num_round[i], vec[i] - floor(vec[i])) + floor(vec[i])
+            * num_round)
+    Parameters
+    ----------
+    vec : (numpy.ndarray, float)
+        non-integer numbers to be rounded
+    num_round : (numpy.ndarray, unsigned int)
+        parameter of the binomial distribution for each entry in vec, must
+        have same shape as vec
+    mt_ptrs : (numpy.ndarray, uint64)
+        List of addresses to MT state objects to use for RN generation
+    Returns
+    -------
+    (numpy.ndarray, int)
+        integer array of results
     """
 
     flr_vec = numpy.floor(vec)
-    flr_vec = flr_vec.astype(int)
-    b = flr_vec * num_round + numpy.random.binomial(num_round, vec - flr_vec)
+    flr_vec = flr_vec.astype(numpy.int32)
+    n = num_round.astype(numpy.uint32)
+    b = flr_vec * num_round + near_uniform.par_binomial(n, vec - flr_vec, mt_ptrs)
     return b
 
 
-def sample_alias(alias, Q, row_idx):
+def round_bernoulli(vec, mt_ptrs):
+    """Round non-integer entries in vec to integer entries in b such that
+    b[i] ~ binomial(1, vec[i] - floor(vec[i])) + floor(vec[i])
+    Parameters
+    ----------
+    vec : (numpy.ndarray, float)
+        non-integer numbers to be rounded
+    mt_ptrs : (numpy.ndarray, uint64)
+        List of addresses to MT state objects to use for RN generation
+    Returns
+    -------
+    (numpy.ndarray, int)
+        integer array of results
+    """
+
+    flr_vec = numpy.floor(vec)
+    flr_vec = flr_vec.astype(numpy.int32)
+    b = flr_vec + near_uniform.par_bernoulli(vec - flr_vec, mt_ptrs)
+    return b
+
+
+def sample_alias(alias, Q, row_idx, mt_ptrs):
     """Perform multinomial sampling using the alias method for an array of
-        probability distributions.
-        Parameters
-        ----------
-        alias : (numpy.ndarray, unsigned int)
-            alias indices as calculated in cyth_helpers2.setup_alias
-        Q : (numpy.ndarray, float)
-            alias probabilities as calculated in cyth_helpers2.setup_alias
-        row_idx : (numpy.ndarray, unsigned int)
-            Row index in alias/Q of each value to sample. Can be obtained from
-            desired numbers of samples using cyth_helpers2.ind_from_count()
-        Returns
-        -------
-        (numpy.ndarray, unsigned char)
-            1-D array of chosen column indices of each sample
+    probability distributions.
+    Parameters
+    ----------
+    alias : (numpy.ndarray, unsigned int)
+        alias indices as calculated in cyth_helpers2.setup_alias
+    Q : (numpy.ndarray, float)
+        alias probabilities as calculated in cyth_helpers2.setup_alias
+    row_idx : (numpy.ndarray, unsigned int)
+        Row index in alias/Q of each value to sample. Can be obtained from
+        desired numbers of samples using cyth_helpers2.ind_from_count()
+    mt_ptrs : (numpy.ndarray, uint64)
+        List of addresses to MT state objects to use for RN generation
+    Returns
+    -------
+    (numpy.ndarray, unsigned char)
+        1-D array of chosen column indices of each sample
     """
 
     n_states = alias.shape[1]
     tot_samp = row_idx.shape[0]
     r_ints = numpy.random.randint(n_states, size=tot_samp)
-    orig_success = numpy.random.binomial(1, Q[row_idx, r_ints])
+    orig_success = near_uniform.par_bernoulli(Q[row_idx, r_ints], mt_ptrs)
     orig_idx = orig_success == 1
     alias_idx = numpy.logical_not(orig_idx)
 

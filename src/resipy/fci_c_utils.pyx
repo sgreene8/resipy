@@ -5,10 +5,10 @@ determinants and calculating FCI matrix elements. See fci_utils.py for more
 information.
 """
 
-import fci_utils
 import numpy
 cimport numpy
-from cython.parallel import prange, threadid
+from cython.parallel import prange
+from libc.stdio cimport printf
 
 def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec,
                   unsigned char[:] lookup_nums, unsigned char[:, :] lookup_idx):
@@ -48,7 +48,7 @@ def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec
     if num_orb % 8 > 0:
         num_bytes += 1
     
-    for det_idx in range(n_dets):
+    for det_idx in prange(n_dets, nogil=True, schedule=static):
         curr_det = dets[det_idx]
         elec_idx = 0
         for byte_idx in range(num_bytes):
@@ -58,13 +58,59 @@ def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec
                 occ_orbs[det_idx, elec_idx + bit_idx] = (8 * byte_idx + 
                                                          lookup_idx[det_byte, 
                                                                     bit_idx])
-            elec_idx += n_elec
-            curr_det >>= 8
+            elec_idx = elec_idx + n_elec
+            curr_det = curr_det >> 8
             
     return occ_orbs
 
 
-def single_dets_matrel(numpy.ndarray[numpy.int64_t] dets, 
+def doub_matr_el_nosgn(unsigned char[:, :] chosen_idx, double[:, :, :, :] eris, 
+                       unsigned int n_frozen):
+    """Calculate the matrix elements for double excitations without accounting
+        for the parity of the excitations.
+
+        Parameters
+        ----------
+        chosen_idx : (numpy.ndarray, unsigned int)
+            the chosen indices of the two occupied orbitals (0th and 1st
+            columns) and two virtual orbitals (2nd and 3rd columns) in each
+            excitation
+        eris : (numpy.ndarray, float)
+            4-D array of 2-electron integrals in spatial MO basis
+        n_frozen : (unsigned int)
+            number of core electrons frozen in the calculation
+
+        Returns
+        -------
+        (numpy.ndarray, float)
+            matrix elements for all excitations
+    """
+    cdef unsigned int adj_n_orb = eris.shape[0] - n_frozen / 2
+    cdef size_t n_samp = chosen_idx.shape[0]
+    cdef numpy.ndarray[numpy.float64_t] matrix_el = numpy.zeros(n_samp)
+    cdef size_t samp_idx
+    cdef unsigned char sp0, sp1, sp2, sp3
+    cdef int same_sp
+    cdef double mat_el
+
+    for samp_idx in prange(n_samp, nogil=True, schedule=static):
+        sp0 = chosen_idx[samp_idx, 0]
+        sp1 = chosen_idx[samp_idx, 1]
+        same_sp = sp0 / adj_n_orb == sp1 / adj_n_orb
+        sp0 = (sp0 % adj_n_orb) + n_frozen / 2
+        sp1 = (sp1 % adj_n_orb) + n_frozen / 2
+        sp2 = (chosen_idx[samp_idx, 2] % adj_n_orb) + n_frozen / 2
+        sp3 = (chosen_idx[samp_idx, 3] % adj_n_orb) + n_frozen / 2
+
+        mat_el = eris[sp0, sp1, sp2, sp3]
+        if same_sp:
+            mat_el = mat_el - eris[sp0, sp1, sp3, sp2]
+        matrix_el[samp_idx] = mat_el
+
+    return matrix_el
+
+
+def single_dets_matrel_nosgn(numpy.ndarray[numpy.int64_t] dets, 
                        numpy.ndarray[numpy.uint8_t, ndim=2] ex_orbs,
                        double[:,:,:,:] eris, double[:,:] hcore,
                        unsigned char[:,:] occ_orbs, unsigned int n_frozen):
@@ -124,8 +170,7 @@ def single_dets_matrel(numpy.ndarray[numpy.int64_t] dets,
                                            n_frozen, occ_orbs[i, j] - n_orb + 
                                            n_frozen, unocc_spa]
         matrix_el[i] = matr_sum
-    
-    matrix_el *= fci_utils.excite_signs(ex_orbs[:, 1], ex_orbs[:, 0], dets)
+
     one = numpy.ones(1, dtype=numpy.int64)
     excited_dets = dets ^ (one << ex_orbs[:, 0])
     excited_dets ^= one << ex_orbs[:, 1]
@@ -197,6 +242,55 @@ def diag_matrel(unsigned char[:,:] occ_orbs, double[:,:] hcore,
         matrix_el[i] = matr_sum
     
     return matrix_el
+
+
+def excite_signs(unsigned char[:] cre_ops, unsigned char[:] des_ops, long long[:] dets):
+    """Calculate the parities of single excitations for an array of bit string
+        representations of determinants, i.e. determine the sign of cre_ops^+
+        des_ops |bitstrings>. Same as the pyscf subroutine pyscf.fci.cistring.cre_des_sign,
+        except can operate on numpy vectors.
+
+        Parameters
+        ----------
+        cre_ops : (numpy.ndarray, uint8)
+            orbital indices of creation operators
+        des_ops : (numpy.ndarray, uint8)
+            orbital indices of destruction operators
+        dets : (numpy.ndarray, int64)
+            bit-string representations of determinants
+        Returns
+        -------
+        (numpy.ndarray, int8)
+            signs of excitations, +1 or -1
+    """
+    cdef size_t n_dets = dets.shape[0]
+    cdef unsigned char[16] byte_counts = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4]
+    cdef size_t det_idx
+    cdef unsigned char credes_max, credes_min
+    cdef long long curr_det, mask
+    cdef numpy.ndarray[numpy.int8_t] signs = numpy.zeros(n_dets, dtype=numpy.int8)
+    cdef int n_perm
+
+    for det_idx in range(n_dets):
+        if cre_ops[det_idx] < des_ops[det_idx]:
+            credes_min = cre_ops[det_idx]
+            credes_max = des_ops[det_idx]
+        else:
+            credes_max = cre_ops[det_idx]
+            credes_min = des_ops[det_idx]
+
+        n_perm = 0
+        mask = (< long long > 1 << credes_max) - (< long long > 1 << (credes_min + 1))
+        curr_det = (dets[det_idx] & mask) >> (credes_min + 1)
+
+        while curr_det > 0:
+            n_perm += byte_counts[curr_det & 15]
+            curr_det = curr_det >> 4
+        if n_perm % 2 == 0:
+            signs[det_idx] = 1
+        else:
+            signs[det_idx] = -1
+    return signs
 
 
 def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[numpy.uint8_t] orb_symm):

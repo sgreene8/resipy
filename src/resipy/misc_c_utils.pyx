@@ -3,8 +3,8 @@
 import numpy
 cimport numpy
 cimport cython
+cimport openmp
 from cython.parallel import prange, threadid, parallel
-
 
 def dot_sorted(long long[:] ind1, double[:] val1, long long[:] ind2, double[:] val2):
     """Calculate dot product of 2 vectors in sparse format.
@@ -12,13 +12,13 @@ def dot_sorted(long long[:] ind1, double[:] val1, long long[:] ind2, double[:] v
     Parameters
     ----------
     ind1 : (numpy.ndarray, int64)
-            Sorted indices of first vector
+        Sorted indices of first vector
     val1 : (numpy.ndarray, float64)
-            Values of first vector
+        Values of first vector
     ind2 : (numpy.ndarray, int64)
-            Sorted indices of second vector
+        Sorted indices of second vector
     val2 : (numpy.ndarray, float64)
-            Values of second vector
+        Values of second vector
 
     Returns
     -------
@@ -45,6 +45,171 @@ def dot_sorted(long long[:] ind1, double[:] val1, long long[:] ind2, double[:] v
             pos2 += 1
 
     return dot_prod
+
+
+def merge_sorted_int(long long[:] ind1, int[:] val1, long long[:] ind2, int[:] val2):
+    """Merge two vectors in sparse format whose indices are already sorted.
+
+    Parameters
+    ----------
+    ind1 : (numpy.ndarray, int64)
+        Sorted indices of first vector
+    val1 : (numpy.ndarray, int32)
+        Values of first vector
+    ind2 : (numpy.ndarray, int64)
+        Sorted indices of second vector
+    val2 : (numpy.ndarray, int32)
+        Values of second vector
+
+    Returns
+    -------
+    (numpy.ndarray, int64)
+        Sorted indices of merged vector
+    (numpy.ndarray, int32)
+        Values of merged vector
+    """
+    cdef size_t pos1 = 0, pos2 = 0
+    cdef size_t len1 = ind1.shape[0]
+    cdef size_t len2 = ind2.shape[0]
+    cdef long long idx1 = ind1[0]
+    cdef long long idx2 = ind2[0]
+    cdef size_t new_pos = 0
+    cdef size_t new_idx
+    cdef numpy.ndarray[numpy.int64_t] new_ind = numpy.zeros(len1 + len2, dtype=numpy.int64)
+    cdef numpy.ndarray[numpy.int32_t] new_val = numpy.zeros(len1 + len2, dtype=numpy.int32)
+
+    cdef long long max_idx = ind1[len1 - 1]
+    if max_idx < ind2[len2 - 1]:
+        max_idx = ind2[len2 - 1]
+    max_idx += 1
+
+    # Make sure new_idx is not equal to idx1 or idx2
+    new_idx = idx1 + 1
+    if new_idx == idx2:
+        new_idx = idx2 + 1
+
+    while pos1 < len1 or pos2 < len2:
+        if idx1 == new_idx:
+            new_val[new_pos] += val1[pos1]
+            pos1 += 1
+            if pos1 < len1:
+                idx1 = ind1[pos1]
+            else:
+                idx1 = max_idx
+        elif idx2 == new_idx:
+            new_val[new_pos] += val2[pos2]
+            pos2 += 1
+            if pos2 < len2:
+                idx2 = ind2[pos2]
+            else:
+                idx2 = max_idx
+        else:
+            if new_val[new_pos] != 0:
+                new_pos += 1
+            if idx1 < idx2:
+                new_idx = idx1
+                new_val[new_pos] = val1[pos1]
+                pos1 += 1
+                if pos1 < len1:
+                    idx1 = ind1[pos1]
+                else:
+                    idx1 = max_idx
+            else:
+                new_idx = idx2
+                new_val[new_pos] = val2[pos2]
+                pos2 += 1
+                if pos2 < len2:
+                    idx2 = ind2[pos2]
+                else:
+                    idx2 = max_idx
+            new_ind[new_pos] = new_idx
+
+    if new_val[new_pos] != 0:
+        new_pos += 1
+
+    return new_ind[:new_pos], new_val[:new_pos]
+
+
+def merge_sorted_doub(long long[:] ind1, double[:] val1, long long[:] ind2, double[:] val2):
+    """Merge two vectors in sparse format whose indices are already sorted.
+
+    Parameters
+    ----------
+    ind1 : (numpy.ndarray, int64)
+        Sorted indices of first vector
+    val1 : (numpy.ndarray, float64)
+        Values of first vector
+    ind2 : (numpy.ndarray, int64)
+        Sorted indices of second vector
+    val2 : (numpy.ndarray, float64)
+        Values of second vector
+
+    Returns
+    -------
+    (numpy.ndarray, int64)
+        Sorted indices of merged vector
+    (numpy.ndarray, float64)
+        Values of merged vector
+    """
+    cdef size_t pos1 = 0, pos2 = 0
+    cdef size_t len1 = ind1.shape[0]
+    cdef size_t len2 = ind2.shape[0]
+    cdef long long idx1 = ind1[0]
+    cdef long long idx2 = ind2[0]
+    cdef size_t new_pos = 0
+    cdef size_t new_idx
+    cdef numpy.ndarray[numpy.int64_t] new_ind = numpy.zeros(len1 + len2, dtype=numpy.int64)
+    cdef numpy.ndarray[numpy.float64_t] new_val = numpy.zeros(len1 + len2)
+
+    cdef long long max_idx = ind1[len1 - 1]
+    if max_idx < ind2[len2 - 1]:
+        max_idx = ind2[len2 - 1]
+    max_idx += 1
+
+    # Make sure new_idx is not equal to idx1 or idx2
+    new_idx = idx1 + 1
+    if new_idx == idx2:
+        new_idx = idx2 + 1
+
+    while pos1 < len1 or pos2 < len2:
+        if idx1 == new_idx:
+            new_val[new_pos] += val1[pos1]
+            pos1 += 1
+            if pos1 < len1:
+                idx1 = ind1[pos1]
+            else:
+                idx1 = max_idx
+        elif idx2 == new_idx:
+            new_val[new_pos] += val2[pos2]
+            pos2 += 1
+            if pos2 < len2:
+                idx2 = ind2[pos2]
+            else:
+                idx2 = max_idx
+        else:
+            if new_val[new_pos] != 0:
+                new_pos += 1
+            if idx1 < idx2:
+                new_idx = idx1
+                new_val[new_pos] = val1[pos1]
+                pos1 += 1
+                if pos1 < len1:
+                    idx1 = ind1[pos1]
+                else:
+                    idx1 = max_idx
+            else:
+                new_idx = idx2
+                new_val[new_pos] = val2[pos2]
+                pos2 += 1
+                if pos2 < len2:
+                    idx2 = ind2[pos2]
+                else:
+                    idx2 = max_idx
+            new_ind[new_pos] = new_idx
+
+    new_pos += 1
+
+    return new_ind[:new_pos], new_val[:new_pos]
 
 
 def ind_from_count(unsigned int[:] counts):
@@ -169,6 +334,18 @@ def linsearch_1D(double[:] search_list, double[:] search_vals):
     return ret_idx
 
 
+def linsearch_1D_cts(double[:] search_list, double[:] search_vals):
+    cdef size_t n_search = search_vals.shape[0]
+    cdef unsigned int search_pos = 0
+    cdef numpy.ndarray[numpy.uint32_t] ret_cts = numpy.zeros(search_list.shape[0], dtype=numpy.uint32)
+
+    for search_idx in range(n_search):
+        while search_list[search_pos] < search_vals[search_idx]:
+            search_pos += 1
+        ret_cts[search_pos] += 1
+    return ret_cts
+
+
 def linsearch_2D(double[:, :] search_lists, unsigned int[:] row_idx,
                  double[:] search_vals):
     """Equivalent to numpy.searchsorted(search_lists[row_idx[i]], search_vals[i])
@@ -217,16 +394,15 @@ def _alias_2D(double[:, :] probs):
     cdef numpy.ndarray[numpy.uint32_t, ndim = 2] aliases = numpy.zeros([num_sys, num_states], dtype=numpy.uint32)
     cdef numpy.ndarray[numpy.float64_t, ndim = 2] Q = numpy.zeros([num_sys, num_states], dtype=numpy.float64)
 
-    cdef unsigned int n_threads = 8
     cdef unsigned int thread_idx
+    cdef unsigned int n_threads = openmp.omp_get_max_threads()
     cdef numpy.ndarray[numpy.uint32_t, ndim = 2] smaller = numpy.zeros([n_threads, num_states], dtype=numpy.uint32)
     cdef numpy.ndarray[numpy.uint32_t, ndim = 2] bigger = numpy.zeros([n_threads, num_states], dtype=numpy.uint32)
 
-    # for j in prange(num_sys, nogil=True, schedule=dynamic, num_threads=n_threads):
-    for j in range(num_sys):
+    for j in prange(num_sys, nogil=True, schedule=static, num_threads=n_threads):
         n_s = 0
         n_b = 0
-        thread_idx = 0#threadid()
+        thread_idx = threadid()
         for i in range(num_states):
             aliases[j, i] = i
             Q[j, i] = num_states * probs[j, i]
@@ -252,3 +428,48 @@ def _alias_2D(double[:, :] probs):
                 Q[j, i] = 1.
 
     return aliases, Q
+
+
+# def fri_big_idx(numpy.ndarray[numpy.float64_t] weights, unsigned int[:] num_div, double[:, :] sub_weights,
+#                 unsigned int n_samp):
+#     cdef size_t num_uni = num_div.shape[0]
+#     cdef size_t num_nonuni = sub_weights.shape[0]
+#     cdef size_t num_subdiv = sub_weights.shape[1]
+#     cdef size_t heap_size = num_uni + num_nonuni * num_subdiv
+#     cdef numpy.ndarray[numpy.uint8_t] uni_keep = numpy.zeros(num_uni, dtype=numpy.uint8)
+#     cdef numpy.ndarray[numpy.uint8_t, ndim=2] nonuni_keep = numpy.zeros([num_nonuni, num_subdiv], dtype=numpy.uint8)
+#     cdef double one_norm = weights.sum()
+
+#     cdef numpy.ndarray[numpy.float64_t] new_weights = numpy.zeros(heap_size)
+#     new_weights[:num_uni] = weights[:num_uni] / num_div
+#     nonuni_weights = sub_weights * weights[num_uni:, numpy.newaxis]
+#     nonuni_weights.shape = -1
+#     new_weights[num_uni:] = nonuni_weights
+
+#     cdef numpy.ndarray[numpy.uint32_t] new_idx = numpy.arange(heap_size, dtype=numpy.uint32)
+
+#     heapify(&new_weights[0], &new_idx[0], heap_size)
+
+#     cdef unsigned int n_chosen = 0
+#     cdef double max_wt = new_weights[0]
+#     cdef unsigned int max_idx = new_idx[0]
+
+#     while max_wt >= one_norm / (n_samp - n_chosen) and one_norm > 1e-9:
+#         if max_idx > num_uni:
+#             max_idx -= num_uni
+#             nonuni_keep[max_idx / num_subdiv, max_idx % num_subdiv] = 1
+#             sub_weights[max_idx / num_subdiv, max_idx % num_subdiv] = 0
+#             n_chosen += 1
+#             one_norm -= max_wt
+#         else:
+#             uni_keep[max_idx] = 1
+#             n_chosen += num_div[max_idx]
+#             one_norm -= weights[max_idx]
+#             weights[max_idx] = 0
+
+#         pop(&new_weights[0], &new_idx[0], heap_size)
+#         heap_size -= 1
+#         max_wt = new_weights[0]
+#         max_idx = new_idx[0]
+
+#     return uni_keep.astype(numpy.bool_), nonuni_keep.astype(numpy.bool_)

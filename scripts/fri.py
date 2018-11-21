@@ -66,10 +66,7 @@ def main():
                 sol_vec.indices, occ_orbs, symm)
             sing_probs = numpy.ones_like(sing_idx, dtype=numpy.float64)
         elif args.sampl_mode == "multinomial":
-            col_idx = compress_utils.sys_resample(
-                numpy.abs(sol_vec.values), args.H_sample)
-            n_col = numpy.zeros(sol_vec.values.shape[0], numpy.uint32)
-            numpy.add.at(n_col, col_idx, 1)
+            n_col, = compress_utils.sys_resample(numpy.abs(sol_vec.values), args.H_sample, ret_counts=True)
             n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
                 n_col, p_doub)
 
@@ -90,14 +87,14 @@ def main():
         elif args.dist == "heat-bath_PP" and args.sampl_mode == "multinomial":
             # Sample double excitations
             doub_orbs, doub_probs, doub_idx = heat_bath.doub_multin(
-                occ1_probs, occ2_probs, exch_probs, sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col)
+                occ1_probs, occ2_probs, exch_probs, sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
             doub_probs *= p_doub * n_col[doub_idx]
         elif args.dist == "heat-bath_PP" and args.sampl_mode == "fri":
             pass
         else:
             raise RuntimeError("This sampling mode is not yet implemented for the specified distribution.")
 
-        doub_matrel = fci_utils.doub_matr_el_nosgn(
+        doub_matrel = fci_c_utils.doub_matr_el_nosgn(
             doub_orbs, eris, args.frozen)
         # Retain nonzero elements
         doub_nonz = doub_matrel != 0
@@ -115,7 +112,7 @@ def main():
         spawn_dets = doub_dets
         spawn_vals = doub_matrel
 
-        sing_dets, sing_matrel = fci_c_utils.single_dets_matrel(
+        sing_dets, sing_matrel = fci_c_utils.single_dets_matrel_nosgn(
             sol_vec.indices[sing_idx], sing_orbs, eris, h_core, occ_orbs[sing_idx], args.frozen)
         # Retain nonzero elements
         sing_nonz = sing_matrel != 0
@@ -123,8 +120,10 @@ def main():
         sing_dets = sing_dets[sing_nonz]
         sing_matrel = sing_matrel[sing_nonz]
         sing_probs = sing_probs[sing_nonz]
+        sing_orbs = sing_orbs[sing_nonz]
         # Calculate determinants and matrix elements
-        sing_matrel *= args.epsilon / sing_probs * -sol_vec.values[sing_idx]
+        sing_signs = fci_c_utils.excite_signs(sing_orbs[:, 1], sing_orbs[:, 0], sing_dets)
+        sing_matrel *= args.epsilon / sing_probs * -sol_vec.values[sing_idx] * sing_signs
         # Add to next iterate
         spawn_dets = numpy.append(spawn_dets, sing_dets)
         spawn_vals = numpy.append(spawn_vals, sing_matrel)
@@ -146,8 +145,6 @@ def main():
 
         cmp_idx, cmp_vals = compress_utils.fri_1D(next_vec.values, args.sparsity)
         cmp_dets = next_vec.indices[cmp_idx]
-        # cmp_dets, cmp_vals = compress_utils.compress_sparse_vector(
-        #     next_vec.indices, next_vec.values, args.sparsity)
         sol_vec = sparse_vector.SparseVector(cmp_dets, cmp_vals)
         occ_orbs = fci_c_utils.gen_orb_lists(cmp_dets, 2 * n_orb, args.n_elec -
                                              args.frozen, byte_nums, byte_idx)

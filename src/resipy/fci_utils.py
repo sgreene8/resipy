@@ -14,56 +14,6 @@ import fci_c_utils
 import sparse_vector
 
 
-def excite_signs(cre_ops, des_ops, bit_strings):
-    """Calculate the parities of single excitations for an array of bit strings,
-        i.e. determine the sign of cre_ops^+ des_ops |bitstrings>. Same as the
-        pyscf subroutine pyscf.fci.cistring.cre_des_sign, except can operate on
-        numpy vectors.
-
-        Parameters
-        ----------
-        cre_ops : (numpy.ndarray, unsigned int)
-            orbital indices of creation operators
-        des_ops : (numpy.ndarray, unsigned int)
-            orbital indices of destruction operators
-
-        Returns
-        -------
-        (numpy.ndarray, int8)
-            signs of excitations, +1 or -1
-    """
-
-    credes_max = numpy.maximum(cre_ops, des_ops)
-    if credes_max.shape[0] > 0:
-        max_orb = numpy.amax(credes_max)
-    else:
-        return numpy.array([], dtype=numpy.int32)
-    credes_min = numpy.minimum(cre_ops, des_ops)
-    one = numpy.array([1], dtype=numpy.int64)
-    mask = (one << credes_max) - (one << (credes_min + 1))
-    
-    # number of 1's in a binary representation of each number 0-15
-    byte_counts = numpy.array([0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4],
-                              dtype=numpy.int8)
-    # the number of half-bytes (4 bits) encoded in each bit string
-    num_hexa = numpy.ceil(max_orb / 4.)
-    num_hexa = num_hexa.astype(int)
-    
-    mask &= bit_strings
-    
-    # divide mask into 4-bit units
-    mask.shape = (-1, 1)
-    shifts = 4 * numpy.arange(num_hexa)
-    mask_split = mask >> shifts
-    mask_split &= 15
-    
-    # count number of 1's in each 4-bit unit
-    num_jump = byte_counts[mask_split]
-    num_jump = num_jump.sum(axis=1)
-
-    return (-1) ** num_jump
-
-
 def gen_byte_table():
     """Generate lookup tables used to decompose a byte into a list of positions
         of 1's.
@@ -110,39 +60,6 @@ def gen_symm_lookup(n_symm_el, orb_symm):
     return symm_table
 
 
-def doub_matr_el_nosgn(chosen_idx, eris, n_frozen):
-    """Calculate the matrix elements for double excitations without accounting
-        for the parity of the excitations.
-
-        Parameters
-        ----------
-        chosen_idx : (numpy.ndarray, unsigned int)
-            the chosen indices of the two occupied orbitals (0th and 1st
-            columns) and two virtual orbitals (2nd and 3rd columns) in each
-            excitation
-        eris : (numpy.ndarray, float)
-            4-D array of 2-electron integrals in spatial MO basis
-        n_frozen : (unsigned int)
-            number of core electrons frozen in the calculation
-
-        Returns
-        -------
-        (numpy.ndarray, float)
-            matrix elements for all excitations
-    """
-
-    n_orb = eris.shape[0]
-    chosen_orbs = chosen_idx + n_frozen/2
-    chosen_orbs[chosen_orbs >= n_orb] += n_frozen/2
-    same_sp = chosen_orbs[:, 0] / n_orb == chosen_orbs[:, 1] / n_orb
-    spatial = chosen_orbs % n_orb
-    matrix_el = eris[spatial[:, 0], spatial[:, 1],
-                     spatial[:, 2], spatial[:, 3]]
-    matrix_el[same_sp] -= eris[spatial[same_sp, 0], spatial[same_sp, 1],
-                               spatial[same_sp, 3], spatial[same_sp, 2]]
-    return matrix_el
-
-
 def doub_dets_parity(dets, chosen_idx):
     """Given a set of double excitations from certain determinants, calculate
         the parity and the new determinant resulting from each excitation.
@@ -168,8 +85,8 @@ def doub_dets_parity(dets, chosen_idx):
     one = numpy.ones(1, dtype=numpy.int64)
     excited_dets = dets ^ (one << chosen_idx[:, 0])
     excited_dets ^= (one << chosen_idx[:, 1])
-    signs = excite_signs(chosen_idx[:, 2], chosen_idx[:, 0], excited_dets)
-    signs *= excite_signs(chosen_idx[:, 3], chosen_idx[:, 1], excited_dets)
+    signs = fci_c_utils.excite_signs(chosen_idx[:, 2], chosen_idx[:, 0], excited_dets)
+    signs *= fci_c_utils.excite_signs(chosen_idx[:, 3], chosen_idx[:, 1], excited_dets)
     excited_dets ^= (one << chosen_idx[:, 2])
     excited_dets ^= (one << chosen_idx[:, 3])
     return excited_dets, signs
@@ -310,7 +227,7 @@ def gen_hf_ex(hf_det, hf_occ, n_orb, orb_symm, eris, n_frozen):
     occ_arr = hf_occ.copy()
     occ_arr.shape = (1, -1)
     ex_orbs, det_idx = fci_c_utils.all_doub_ex(det_arr, occ_arr, orb_symm)
-    matr_el = doub_matr_el_nosgn(ex_orbs, eris, n_frozen)
+    matr_el = fci_c_utils.doub_matr_el_nosgn(ex_orbs, eris, n_frozen)
     ex_dets, ex_signs = doub_dets_parity(det_arr, ex_orbs)
     matr_el *= ex_signs
     srt_idx = numpy.argsort(ex_dets)

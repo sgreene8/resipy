@@ -9,6 +9,7 @@ import fci_utils
 import compress_utils
 import misc_c_utils
 import near_uniform
+from numba import jit
 
 
 def set_up(frozen, eris):
@@ -110,7 +111,9 @@ def _cs_symm_wts(sampl_virt, sampl_occ, symm, all_dets, exch_tens,
     norms = symm_wts.sum(axis=1)
     nonnull = norms > 1e-8
     norms = 1. / norms[nonnull]
-    symm_wts = symm_wts[nonnull] * norms[:, numpy.newaxis]
+    symm_wts = symm_wts[numpy.where(nonnull)]# * norms[:, numpy.newaxis]
+    norms.shape = (-1, 1)
+    symm_wts *= norms
 
     return symm_wts, nonnull
 
@@ -163,7 +166,7 @@ def fri_comp(sol_vec, n_nonz, s_tens, d_tens, exch_tens, p_doub, occ_orbs, orb_s
     """
 
 
-def doub_multin(s_tens, d_tens, exch_tens, dets, occ_orbs, orb_symm, lookup_tabl, n_sampl):
+def doub_multin(s_tens, d_tens, exch_tens, dets, occ_orbs, orb_symm, lookup_tabl, n_sampl, mt_ptrs):
     """Sample double excitations multinomially from the heat-bath Power-Pitzer
     distribution defined in Neufeld and Thom (2018).
 
@@ -187,7 +190,8 @@ def doub_multin(s_tens, d_tens, exch_tens, dets, occ_orbs, orb_symm, lookup_tabl
         by fci_utils.gen_byte_table()
     n_sampl : (numpy.ndarray, uint32)
         number of double excitations to choose for each determinant
-
+    mt_ptrs : (numpy.ndarray, uint64)
+        List of addresses to MT state objects to use for RN generation
     Returns
     -------
     (numpy.ndarray, uint8) :
@@ -199,11 +203,12 @@ def doub_multin(s_tens, d_tens, exch_tens, dets, occ_orbs, orb_symm, lookup_tabl
         index of the origin determinant of each chosen excitation in the
         dets array
     """
+    # print('hello world!')
     det_idx = misc_c_utils.ind_from_count(n_sampl)
     tot_sampl = det_idx.shape[0]
     n_orb = s_tens.shape[0] / 2
 
-    doub_occ, occ_probs = _multi_occ_pair(s_tens, d_tens, occ_orbs, n_sampl, det_idx)
+    doub_occ, occ_probs = _multi_occ_pair(s_tens, d_tens, occ_orbs, n_sampl, det_idx, mt_ptrs)
 
     doub_unocc = numpy.zeros([tot_sampl, 2], dtype=numpy.uint8)
 
@@ -211,7 +216,7 @@ def doub_multin(s_tens, d_tens, exch_tens, dets, occ_orbs, orb_symm, lookup_tabl
     virt1_wts = _cs_virt_wts(doub_occ[:, 0], det_idx, exch_tens, occ_orbs)
 
     alias, Q = misc_c_utils.setup_alias(virt1_wts)
-    unocc1_orbs = compress_utils.sample_alias(alias, Q, tmp_idx)
+    unocc1_orbs = compress_utils.sample_alias(alias, Q, tmp_idx, mt_ptrs)
     unocc_probs = virt1_wts[tmp_idx, unocc1_orbs]
     spin1 = (doub_occ[:, 0] / n_orb) * n_orb
     doub_unocc[:, 0] = unocc1_orbs + spin1
@@ -234,7 +239,7 @@ def doub_multin(s_tens, d_tens, exch_tens, dets, occ_orbs, orb_symm, lookup_tabl
 
     alias, Q = misc_c_utils.setup_alias(virt2_wts)
     tmp_idx = numpy.arange(tot_sampl, dtype=numpy.uint32)
-    unocc2_orbs = compress_utils.sample_alias(alias, Q, tmp_idx)
+    unocc2_orbs = compress_utils.sample_alias(alias, Q, tmp_idx, mt_ptrs)
     doub_unocc[:, 1] = unocc2_orbs + spin2
     unocc_probs *= virt2_wts[tmp_idx, unocc2_orbs]
 
@@ -260,7 +265,7 @@ def doub_multin(s_tens, d_tens, exch_tens, dets, occ_orbs, orb_symm, lookup_tabl
     return sampl_orbs, unocc_probs * occ_probs, det_idx
 
 
-def _multi_occ_pair(s_tens, d_tens, occ_orbs, n_sampl, idx):
+def _multi_occ_pair(s_tens, d_tens, occ_orbs, n_sampl, idx, mt_ptrs):
     # Multinomially choose the occupied orbitals for a double excitation
     tot_sampl = idx.shape[0]
     chosen_orbs = numpy.zeros([tot_sampl, 2], dtype=numpy.uint8)
@@ -272,7 +277,7 @@ def _multi_occ_pair(s_tens, d_tens, occ_orbs, n_sampl, idx):
     hf_o1_probs /= norms
     hf_o1_probs.shape = (1, -1)
     alias, Q = misc_c_utils.setup_alias(hf_o1_probs)
-    hf_o1_idx = compress_utils.sample_alias(alias, Q, idx[:n_hf])
+    hf_o1_idx = compress_utils.sample_alias(alias, Q, idx[:n_hf], mt_ptrs)
     chosen_orbs[:n_hf, 0] = occ_orbs[0, hf_o1_idx]
     chosen_probs[:n_hf, 0] = hf_o1_probs[0, hf_o1_idx]
 
@@ -281,7 +286,7 @@ def _multi_occ_pair(s_tens, d_tens, occ_orbs, n_sampl, idx):
     norms.shape = (-1, 1)
     o1_probs /= norms
     alias, Q = misc_c_utils.setup_alias(o1_probs)
-    o1_idx = compress_utils.sample_alias(alias, Q, idx[n_hf:] - 1)
+    o1_idx = compress_utils.sample_alias(alias, Q, idx[n_hf:] - 1, mt_ptrs)
     chosen_orbs[n_hf:, 0] = occ_orbs[idx[n_hf:], o1_idx]
     chosen_probs[n_hf:, 0] = o1_probs[idx[n_hf:] - 1, o1_idx]
 
@@ -299,7 +304,7 @@ def _multi_occ_pair(s_tens, d_tens, occ_orbs, n_sampl, idx):
     norms.shape = (-1, 1)
     hf_o2_probs /= norms
     alias, Q = misc_c_utils.setup_alias(hf_o2_probs)
-    hf_o2_idx = compress_utils.sample_alias(alias, Q, hf_o1_idx)
+    hf_o2_idx = compress_utils.sample_alias(alias, Q, hf_o1_idx, mt_ptrs)
     chosen_orbs[:n_hf, 1] = occ_orbs[0, hf_o2_idx]
     chosen_probs[:n_hf, 1] = hf_o1_probs[0, hf_o2_idx] * hf_o2_probs[hf_o2_idx, hf_o1_idx]
     chosen_probs[:n_hf, 0] *= hf_o2_probs[hf_o1_idx, hf_o2_idx]
@@ -311,7 +316,7 @@ def _multi_occ_pair(s_tens, d_tens, occ_orbs, n_sampl, idx):
     o2_probs /= norms
     alias, Q = misc_c_utils.setup_alias(o2_probs)
     tmp_idx = numpy.arange(tot_sampl - n_hf, dtype=numpy.uint32)
-    o2_idx = compress_utils.sample_alias(alias, Q, tmp_idx)
+    o2_idx = compress_utils.sample_alias(alias, Q, tmp_idx, mt_ptrs)
     chosen_orbs[n_hf:, 1] = occ_expand[tmp_idx, o2_idx]
     chosen_probs[n_hf:, 1] = o1_probs[idx[n_hf:] - 1, o2_idx]
     chosen_probs[n_hf:, 0] *= o2_probs[tmp_idx, o2_idx]

@@ -26,6 +26,7 @@ except ImportError:
     Cython = None
 
 
+
 def read(*names, **kwargs):
     return io.open(
         join(dirname(__file__), *names),
@@ -102,11 +103,12 @@ setup(
         Extension(
             splitext(relpath(path, 'src').replace(os.sep, '.'))[0],
             sources=[path],
-            include_dirs=[dirname(path), numpy.get_include(), 'dcmt'],
+            include_dirs=[dirname(path), numpy.get_include(), "dcmt"],
             libraries=["m", "dcmt"],
             extra_compile_args = ["-O3", "-ffast-math", "-march=native", "-fopenmp" ],
             extra_link_args=['-fopenmp'],
-            library_dirs = ["dcmt"]
+            library_dirs = ["dcmt"],
+            define_macros=[('CYTHON_TRACE', '1')]
         )
         for root, _, _ in os.walk('src')
         for path in glob(join(root, '*.pyx' if Cython else '*.c'))

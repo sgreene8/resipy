@@ -42,48 +42,20 @@ class SparseVector(object):
         self.values = val
 
     def add(self, idx, val):
-        """
-        Add elements to an existing sparse vector.
+        if idx.shape[0] == 0:
+            return
+        srt_idx = idx.argsort()
+        idx = idx[srt_idx]
+        val = val[srt_idx]
 
-        Parameters
-        ----------
-        idx : (numpy.ndarray, int or uint)
-                Indices of elements to add. Need not be sorted.
-        val : (numpy.ndarray, float)
-                Values of elements to add
-        """
-        insert_idx = numpy.searchsorted(self.indices, idx)
-        # elements that do not need to be appended to vector
-        is_inside = self.indices.shape[0] != insert_idx
-        inside_idx = idx[is_inside]
-        insert_inside = insert_idx[is_inside]
-        val_inside = val[is_inside]
-
-        # Elements that match up with existing elements
-        match_idx = numpy.equal(self.indices[insert_inside], inside_idx)
-        numpy.add.at(
-            self.values, insert_inside[match_idx], val_inside[match_idx])
-
-        # Elements that do not match up and need to be inserted before the end of the array
-        notmatch_idx = numpy.logical_not(match_idx)
-        idx_to_insert = inside_idx[notmatch_idx]
-        val_to_insert = val_inside[notmatch_idx]
-        target_idx = insert_inside[notmatch_idx]
-        idx_to_insert, val_to_insert, target_idx = _uniquify(idx_to_insert, val_to_insert, target_idx)
-        self.indices = numpy.insert(self.indices, target_idx, idx_to_insert)
-        self.values = numpy.insert(self.values, target_idx, val_to_insert)
-
-        nonz_ind = self.values != 0
-        self.indices = self.indices[nonz_ind]
-        self.values = self.values[nonz_ind]
-
-        # Elements that must be appended to end of array
-        not_inside = numpy.logical_not(is_inside)
-        app_idx = idx[not_inside]
-        app_val = val[not_inside]
-        app_idx, app_val, dummy = _uniquify(app_idx, app_val, None)
-        self.indices = numpy.append(self.indices, app_idx)
-        self.values = numpy.append(self.values, app_val)
+        if self.values.dtype is numpy.dtype('int32'):
+            new_idx, new_val = misc_c_utils.merge_sorted_int(self.indices, self.values, idx, val)
+        elif self.values.dtype is numpy.dtype('float64'):
+            new_idx, new_val = misc_c_utils.merge_sorted_doub(self.indices, self.values, idx, val)
+        else:
+            raise TypeError("Dtype %s not yet supported in SparseVector class", self.values.dtype)
+        self.indices = new_idx
+        self.values = new_val
 
     def dot(self, vec):
         """

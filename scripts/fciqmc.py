@@ -13,7 +13,7 @@ from resipy import near_uniform
 from resipy import compress_utils
 from resipy import io_utils
 
-@profile
+
 def main():
     args = _parse_args()
     _describe_args(args)
@@ -49,6 +49,7 @@ def main():
         occ1_probs, occ2_probs, exch_probs = heat_bath.set_up(args.frozen, eris)
 
     rngen_ptrs = near_uniform.initialize_mt(args.procs)
+    numpy.random.seed(0)
 
     # Elements in the HF column of FCI matrix
     hf_col = fci_utils.gen_hf_ex(
@@ -70,14 +71,14 @@ def main():
                 sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
         elif args.prob_dist == "heat-bath_PP":
             doub_orbs, doub_probs, doub_idx = heat_bath.doub_multin(
-                occ1_probs, occ2_probs, exch_probs, sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col)
+                occ1_probs, occ2_probs, exch_probs, sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
         else:
             print("Invalid probability distribution chosen")
 
         # Compress double elements
-        doub_matrel = fci_utils.doub_matr_el_nosgn(doub_orbs, eris, args.frozen)
+        doub_matrel = fci_c_utils.doub_matr_el_nosgn(doub_orbs, eris, args.frozen)
         doub_matrel *= args.epsilon / doub_probs / p_doub
-        doub_matrel = compress_utils.round_binomially(doub_matrel, 1)
+        doub_matrel = compress_utils.round_bernoulli(doub_matrel, rngen_ptrs)
 
         doub_nonz = doub_matrel != 0
         doub_idx = doub_idx[doub_nonz]
@@ -89,17 +90,19 @@ def main():
         doub_matrel *= doub_signs * -numpy.sign(sol_vec.values[doub_idx])
 
         # Compress single elements
-        sing_dets, sing_matrel = fci_c_utils.single_dets_matrel(
+        sing_dets, sing_matrel = fci_c_utils.single_dets_matrel_nosgn(
             sol_vec.indices[sing_idx], sing_orbs, eris, h_core, occ_orbs[sing_idx], args.frozen)
         sing_matrel *= args.epsilon / sing_probs / (1 - p_doub)
-        sing_matrel = compress_utils.round_binomially(sing_matrel, 1)
+        sing_matrel = compress_utils.round_bernoulli(sing_matrel, rngen_ptrs)
 
         sing_nonz = sing_matrel != 0
         sing_idx = sing_idx[sing_nonz]
         sing_dets = sing_dets[sing_nonz]
         sing_matrel = sing_matrel[sing_nonz]
+        sing_orbs = sing_orbs[sing_nonz]
 
-        sing_matrel *= -numpy.sign(sol_vec.values[sing_idx])
+        sing_signs = fci_utils.excite_signs(sing_orbs[:, 1], sing_orbs[:, 0], sing_dets)
+        sing_matrel *= -numpy.sign(sol_vec.values[sing_idx]) * sing_signs
 
         spawn_dets = numpy.append(doub_dets, sing_dets)
         spawn_vals = numpy.append(doub_matrel, sing_matrel)
@@ -109,7 +112,7 @@ def main():
             occ_orbs, h_core, eris, args.frozen) - en_shift - hf_en
         diag_matrel = 1 - args.epsilon * diag_matrel
         diag_matrel *= numpy.sign(sol_vec.values)
-        diag_matrel = compress_utils.round_binomially(diag_matrel, n_col)
+        diag_matrel = compress_utils.round_binomially(diag_matrel, n_col, rngen_ptrs)
         # Retain nonzero elements
         diag_nonz = diag_matrel != 0
         next_vec = sparse_vector.SparseVector(
