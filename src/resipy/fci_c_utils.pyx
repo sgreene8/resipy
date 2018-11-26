@@ -9,9 +9,10 @@ import numpy
 cimport numpy
 from cython.parallel import prange
 
+
 def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec,
                   unsigned char[:] lookup_nums, unsigned char[:, :] lookup_idx):
-    """Generate arrays of indices of occupied orbitals from bit string 
+    """Generate arrays of indices of occupied orbitals from bit string
     representations of Slater determinants, following procedure in Sec. 3.1 of
     Booth et al. (2014).
 
@@ -31,22 +32,22 @@ def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec
 
     Returns
     -------
-    (numpy.ndarray, uint8) : 
+    (numpy.ndarray, uint8) :
         indices of occupied orbitals for each determinant
     """
-    
+
     cdef size_t n_dets = dets.shape[0]
-    cdef numpy.ndarray[numpy.uint8_t, ndim=2] occ_orbs = numpy.zeros([n_dets, num_elec], 
-                                                                      dtype=numpy.uint8)
+    cdef numpy.ndarray[numpy.uint8_t, ndim=2] occ_orbs = numpy.zeros([n_dets, num_elec],
+                                                                     dtype=numpy.uint8)
     cdef unsigned int byte_idx, elec_idx
     cdef size_t det_idx
     cdef long long curr_det, mask = 255
     cdef unsigned int num_bytes = num_orb / 8
     cdef unsigned char n_elec, det_byte, bit_idx
-    
+
     if num_orb % 8 > 0:
         num_bytes += 1
-    
+
     for det_idx in prange(n_dets, nogil=True, schedule=static):
         curr_det = dets[det_idx]
         elec_idx = 0
@@ -54,16 +55,16 @@ def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec
             det_byte = curr_det & mask
             n_elec = lookup_nums[det_byte]
             for bit_idx in range(n_elec):
-                occ_orbs[det_idx, elec_idx + bit_idx] = (8 * byte_idx + 
-                                                         lookup_idx[det_byte, 
+                occ_orbs[det_idx, elec_idx + bit_idx] = (8 * byte_idx +
+                                                         lookup_idx[det_byte,
                                                                     bit_idx])
             elec_idx = elec_idx + n_elec
             curr_det = curr_det >> 8
-            
+
     return occ_orbs
 
 
-def doub_matr_el_nosgn(unsigned char[:, :] chosen_idx, double[:, :, :, :] eris, 
+def doub_matr_el_nosgn(unsigned char[:, :] chosen_idx, double[:, :, :, :] eris,
                        unsigned int n_frozen):
     """Calculate the matrix elements for double excitations without accounting
         for the parity of the excitations.
@@ -109,13 +110,13 @@ def doub_matr_el_nosgn(unsigned char[:, :] chosen_idx, double[:, :, :, :] eris,
     return matrix_el
 
 
-def single_dets_matrel_nosgn(numpy.ndarray[numpy.int64_t] dets, 
-                       numpy.ndarray[numpy.uint8_t, ndim=2] ex_orbs,
-                       double[:,:,:,:] eris, double[:,:] hcore,
-                       unsigned char[:,:] occ_orbs, unsigned int n_frozen):
+def single_dets_matrel_nosgn(numpy.ndarray[numpy.int64_t] dets,
+                             numpy.ndarray[numpy.uint8_t, ndim=2] ex_orbs,
+                             double[:, :, :, :] eris, double[:, :] hcore,
+                             unsigned char[:, :] occ_orbs, unsigned int n_frozen):
     '''Calculate matrix elements and resulting determinants for single
     excitations.
-    
+
     Parameters
     ----------
     dets : (numpy.ndarray, int64)
@@ -135,14 +136,14 @@ def single_dets_matrel_nosgn(numpy.ndarray[numpy.int64_t] dets,
     cdef unsigned int n_elec = occ_orbs.shape[1]
     cdef size_t n_dets = dets.shape[0]
     cdef unsigned int n_orb = eris.shape[0]
-    cdef numpy.ndarray[numpy.float64_t] matrix_el = numpy.zeros(n_dets, 
-                                                            dtype=numpy.float64)
+    cdef numpy.ndarray[numpy.float64_t] matrix_el = numpy.zeros(n_dets,
+                                                                dtype=numpy.float64)
     cdef double matr_sum
     cdef size_t i
     cdef unsigned int j, occ_spa, unocc_spa, occ_spin
     cdef unsigned int eris_idx = 0
     cdef unsigned int half_frz = n_frozen / 2
-    
+
     for i in prange(n_dets, nogil=True, schedule=static):
         # spatial index of occupied & unoccupied orbitals
         occ_spa = (ex_orbs[i, 0] % (n_orb - half_frz)) + half_frz
@@ -155,18 +156,18 @@ def single_dets_matrel_nosgn(numpy.ndarray[numpy.int64_t] dets,
             # single-count exchange term
             matr_sum = matr_sum - eris[occ_spa, j, j, unocc_spa]
         for j in range(n_elec / 2):
-            matr_sum = matr_sum + eris[occ_spa, occ_orbs[i, j] + half_frz, 
+            matr_sum = matr_sum + eris[occ_spa, occ_orbs[i, j] + half_frz,
                                        unocc_spa, occ_orbs[i, j] + half_frz]
             if occ_spin == 0:
                 matr_sum = matr_sum - eris[occ_spa, occ_orbs[i, j] + half_frz,
                                            occ_orbs[i, j] + half_frz, unocc_spa]
         for j in range(n_elec / 2, n_elec):
-            matr_sum = matr_sum + eris[occ_spa, occ_orbs[i, j] - n_orb + 
-                                       n_frozen, unocc_spa, occ_orbs[i, j] - 
+            matr_sum = matr_sum + eris[occ_spa, occ_orbs[i, j] - n_orb +
+                                       n_frozen, unocc_spa, occ_orbs[i, j] -
                                        n_orb + n_frozen]
             if occ_spin == 1:
-                matr_sum = matr_sum - eris[occ_spa, occ_orbs[i, j] - n_orb + 
-                                           n_frozen, occ_orbs[i, j] - n_orb + 
+                matr_sum = matr_sum - eris[occ_spa, occ_orbs[i, j] - n_orb +
+                                           n_frozen, occ_orbs[i, j] - n_orb +
                                            n_frozen, unocc_spa]
         matrix_el[i] = matr_sum
 
@@ -176,10 +177,10 @@ def single_dets_matrel_nosgn(numpy.ndarray[numpy.int64_t] dets,
     return excited_dets, matrix_el
 
 
-def diag_matrel(unsigned char[:,:] occ_orbs, double[:,:] hcore, 
-               double[:,:,:,:] eris, unsigned int n_frozen):
+def diag_matrel(unsigned char[:, :] occ_orbs, double[:, :] hcore,
+                double[:, :, :, :] eris, unsigned int n_frozen):
     '''Calculate diagonal matrix elements for a set of Slater determinants.
-    
+
     Parameters
     ----------
     occ_orbs : (numpy.ndarray, uint8)
@@ -190,10 +191,10 @@ def diag_matrel(unsigned char[:,:] occ_orbs, double[:,:] hcore,
         2-electron integrals from Hartree-Fock calculation
     n_frozen : (unsigned int)
         number of core electrons frozen in the calculation
-    
+
     Returns
     -------
-    (numpy.ndarray, float64) : 
+    (numpy.ndarray, float64) :
         diagonal matrix elements, including HF energy, and not including
         nuclear repulsion energy.
     '''
@@ -204,7 +205,7 @@ def diag_matrel(unsigned char[:,:] occ_orbs, double[:,:] hcore,
     cdef double matr_sum
     cdef size_t i
     cdef unsigned int j, k, elec_1, elec_2
-    
+
     for i in prange(num_dets, nogil=True, schedule=static):
         matr_sum = 0.
         for j in range(n_frozen/2):
@@ -213,7 +214,7 @@ def diag_matrel(unsigned char[:,:] occ_orbs, double[:,:] hcore,
             for k in range(j + 1, n_frozen/2):
                 matr_sum = matr_sum + eris[j, k, j, k] * 4
                 matr_sum = matr_sum - eris[j, k, k, j] * 2
-        
+
         for j in range(n_elec/2):
             elec_1 = occ_orbs[i, j] + n_frozen/2
             matr_sum = matr_sum + hcore[elec_1, elec_1]
@@ -227,7 +228,7 @@ def diag_matrel(unsigned char[:,:] occ_orbs, double[:,:] hcore,
             for k in range(n_elec/2, n_elec):
                 elec_2 = occ_orbs[i, k] + n_frozen - n_orb
                 matr_sum = matr_sum + eris[elec_1, elec_2, elec_1, elec_2]
-        
+
         for j in range(n_elec/2, n_elec):
             elec_1 = occ_orbs[i, j] + n_frozen - n_orb
             matr_sum = matr_sum + hcore[elec_1, elec_1]
@@ -239,7 +240,7 @@ def diag_matrel(unsigned char[:,:] occ_orbs, double[:,:] hcore,
                 matr_sum = matr_sum + eris[elec_1, elec_2, elec_1, elec_2]
                 matr_sum = matr_sum - eris[elec_1, elec_2, elec_2, elec_1]
         matrix_el[i] = matr_sum
-    
+
     return matrix_el
 
 
@@ -294,7 +295,7 @@ def excite_signs(unsigned char[:] cre_ops, unsigned char[:] des_ops, long long[:
 
 def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[numpy.uint8_t] orb_symm):
     """Generate all spin-alllowed single excitations from an array of Slater determinants.
-    
+
     Parameters
     ----------
     dets : (numpy.ndarray, int64)
@@ -303,7 +304,7 @@ def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[n
         Orbitals occupied in each determinant
     orb_symm : (numpy.ndarray, uint8)
         Irreducible representations of the spatial orbitals in the basis
-    
+
     Returns
     -------
     (numpy.ndarray, uint8) :
@@ -318,8 +319,8 @@ def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[n
     cdef unsigned int num_orb = orb_symm.shape[0]
     cdef unsigned int num_sing_ex = num_elec * (num_orb - num_elec / 2)
     cdef size_t tot_sampl = num_dets * num_sing_ex
-    
-    cdef numpy.ndarray[numpy.uint8_t, ndim=2] chosen_orbs = numpy.zeros([tot_sampl, 2], 
+
+    cdef numpy.ndarray[numpy.uint8_t, ndim=2] chosen_orbs = numpy.zeros([tot_sampl, 2],
                                                                         dtype=numpy.uint8)
     for det_idx in range(num_dets):
         _sing_ex(dets[det_idx], occ_orbs[det_idx], &chosen_orbs[det_idx * num_sing_ex, 0],
@@ -330,14 +331,14 @@ def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[n
     idx_arr = numpy.tile(idx_arr, (1, num_sing_ex))
     idx_arr.shape = (-1)
 
-    successes = (orb_symm[chosen_orbs[:, 0] % num_orb] == 
+    successes = (orb_symm[chosen_orbs[:, 0] % num_orb] ==
                  orb_symm[chosen_orbs[:, 1] % num_orb])
 
     return chosen_orbs[successes], idx_arr[successes]
 
 
 cdef void _sing_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_arr,
-                    unsigned int num_orb):
+                   unsigned int num_orb):
     """
     Generate all spin-allowed single excitations from a Slater determinant.
     """
@@ -347,14 +348,14 @@ cdef void _sing_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
     for i in range(num_elec / 2):
         i_orb = occ_orbs[i]
         for j in range(num_orb):
-            if not(det & <long long> 1 << j):
+            if not(det & < long long > 1 << j):
                 res_arr[idx] = i_orb
                 res_arr[idx + 1] = j
                 idx += 2
     for i in range(num_elec / 2, num_elec):
         i_orb = occ_orbs[i]
         for j in range(num_orb, 2 * num_orb):
-            if not(det & <long long> 1 << j):
+            if not(det & < long long > 1 << j):
                 res_arr[idx] = i_orb
                 res_arr[idx + 1] = j
                 idx += 2
@@ -362,7 +363,7 @@ cdef void _sing_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
 
 def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[numpy.uint8_t] orb_symm):
     """Generate all spin-alllowed double excitations from an array of Slater determinants.
-    
+
     Parameters
     ----------
     dets : (numpy.ndarray, int64)
@@ -371,7 +372,7 @@ def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[n
         Orbitals occupied in each determinant
     orb_symm : (numpy.ndarray, uint8)
         Irreducible representations of the spatial orbitals in the basis
-    
+
     Returns
     -------
     (numpy.ndarray, uint8) :
@@ -388,11 +389,11 @@ def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[n
     cdef unsigned int n_same = num_elec * (num_elec / 2 - 1) / 2 * n_unocc * (n_unocc - 1) / 2
     cdef unsigned int n_diff = num_elec / 2 * num_elec / 2 * n_unocc ** 2
     cdef unsigned int tot_sampl = num_dets * (n_same + n_diff)
-    
-    cdef numpy.ndarray[numpy.uint8_t, ndim=2] chosen_orbs = numpy.zeros([tot_sampl, 4], 
-                                                                          dtype=numpy.uint8)
+
+    cdef numpy.ndarray[numpy.uint8_t, ndim=2] chosen_orbs = numpy.zeros([tot_sampl, 4],
+                                                                        dtype=numpy.uint8)
     for det_idx in range(num_dets):
-        _doub_ex(dets[det_idx], occ_orbs[det_idx], &chosen_orbs[det_idx * (n_same + 
+        _doub_ex(dets[det_idx], occ_orbs[det_idx], &chosen_orbs[det_idx * (n_same +
                                                                 n_diff), 0], num_orb)
 
     idx_arr = numpy.arange(num_dets, dtype=numpy.uint32)
@@ -400,14 +401,15 @@ def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[n
     idx_arr = numpy.tile(idx_arr, (1, n_same + n_diff))
     idx_arr.shape = (-1)
 
-    successes = (orb_symm[chosen_orbs[:, 0] % num_orb] ^ 
-                 orb_symm[chosen_orbs[:, 1] % num_orb] ^ 
-                 orb_symm[chosen_orbs[:, 2] % num_orb] ^ 
+    successes = (orb_symm[chosen_orbs[:, 0] % num_orb] ^
+                 orb_symm[chosen_orbs[:, 1] % num_orb] ^
+                 orb_symm[chosen_orbs[:, 2] % num_orb] ^
                  orb_symm[chosen_orbs[:, 3] % num_orb]) == 0
     return chosen_orbs[successes], idx_arr[successes]
 
+
 cdef void _doub_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_arr,
-                    unsigned int num_orb):
+                   unsigned int num_orb):
     """
     Generate all spin-allowed double excitations from a Slater determinant.
     """
@@ -420,9 +422,9 @@ cdef void _doub_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
         for j in range(num_elec / 2, num_elec):
             j_orb = occ_orbs[j]
             for k in range(num_orb):
-                if not(det & (<long long> 1 << k)):
+                if not(det & (< long long > 1 << k)):
                     for l in range(num_orb, 2 * num_orb):
-                        if not(det & (<long long> 1 << l)):
+                        if not(det & (< long long > 1 << l)):
                             res_arr[idx] = i_orb
                             res_arr[idx + 1] = j_orb
                             res_arr[idx + 2] = k
@@ -434,9 +436,9 @@ cdef void _doub_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
         for j in range(i + 1, num_elec / 2):
             j_orb = occ_orbs[j]
             for k in range(num_orb):
-                if not(det & (<long long> 1 << k)):
+                if not(det & (< long long > 1 << k)):
                     for l in range(k + 1, num_orb):
-                        if not(det & (<long long> 1 << l)):
+                        if not(det & (< long long > 1 << l)):
                             res_arr[idx] = i_orb
                             res_arr[idx + 1] = j_orb
                             res_arr[idx + 2] = k
@@ -448,12 +450,11 @@ cdef void _doub_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
         for j in range(i + 1, num_elec):
             j_orb = occ_orbs[j]
             for k in range(num_orb, 2 * num_orb):
-                if not(det & (<long long> 1 << k)):
+                if not(det & (< long long > 1 << k)):
                     for l in range(k + 1, 2 * num_orb):
-                        if not(det & (<long long> 1 << l)):
+                        if not(det & (< long long > 1 << l)):
                             res_arr[idx] = i_orb
                             res_arr[idx + 1] = j_orb
                             res_arr[idx + 2] = k
                             res_arr[idx + 3] = l
                             idx += 4
-

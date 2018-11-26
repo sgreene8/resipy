@@ -42,7 +42,6 @@ class SparseVector(object):
         self.indices = new_idx
         self.values = new_val
 
-
     def dot(self, vec):
         """
         Calculate dot product with another SparseVector

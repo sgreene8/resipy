@@ -121,7 +121,7 @@ def count_singex(det, occ_orbs, orb_symm, lookup_tabl):
         elec_spin = elec_orb / num_orb
         for symm_idx in range(lookup_tabl[elec_symm, 0]):
             if not(det & (1 << (lookup_tabl[elec_symm, symm_idx + 1] +
-                                 num_orb * elec_spin))):
+                                num_orb * elec_spin))):
                 num_ex += 1
 
     return num_ex
@@ -177,20 +177,20 @@ def count_doubex(occ_orbs, orb_symm, lookup_tabl):
 
 def gen_hf_bitstring(n_orb, n_elec):
     """Generate the bit string representation of the Hartree-Fock determinant.
-    
+
         Parameters
         ----------
         n_orb : (unsigned int)
             the number of spatial orbitals in the basis
         n_elec : (unsigned int)
             the number of electrons in the system
-        
+
         Returns
         -------
         (int64) :
-            bit string representation of the determinant    
+            bit string representation of the determinant
     """
-    
+
     ones = 2**(n_elec / 2) - 1
     hf_state = ones << n_orb
     hf_state |= ones
@@ -240,7 +240,7 @@ def gen_hf_ex(hf_det, hf_occ, n_orb, orb_symm, eris, n_frozen):
 
 def eris_space2spin(eris_space):
     """Convert the 2-electron integrals from a Hartree-Fock calculation
-    from the spatial orbital basis to the spin orbital basis, and 
+    from the spatial orbital basis to the spin orbital basis, and
     antisymmetrize them.
 
     Parameters
@@ -261,4 +261,3 @@ def eris_space2spin(eris_space):
     eris_spin[n_orb:, :n_orb, n_orb:, :n_orb] = eris_space
     eris_spin[:n_orb, n_orb:, :n_orb, n_orb:] = eris_space
     return eris_spin - eris_spin.transpose(0, 1, 3, 2)
-

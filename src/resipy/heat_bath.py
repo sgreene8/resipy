@@ -110,7 +110,7 @@ def _cs_symm_wts(sampl_virt, sampl_occ, symm, all_dets, exch_tens,
     norms = symm_wts.sum(axis=1)
     nonnull = norms > 1e-8
     norms = 1. / norms[nonnull]
-    symm_wts = symm_wts[numpy.where(nonnull)]# * norms[:, numpy.newaxis]
+    symm_wts = symm_wts[numpy.where(nonnull)]  # * norms[:, numpy.newaxis]
     norms.shape = (-1, 1)
     symm_wts *= norms
 
@@ -118,7 +118,7 @@ def _cs_symm_wts(sampl_virt, sampl_occ, symm, all_dets, exch_tens,
 
 
 def fri_comp(sol_vec, n_nonz, s_tens, d_tens, exch_tens, p_doub, occ_orbs, orb_symm, lookup_tabl):
-    """Perform FRI-type compression on the Near-Uniform (for singles) and heat-bath Power-Pitzer 
+    """Perform FRI-type compression on the Near-Uniform (for singles) and heat-bath Power-Pitzer
     (for doubles) distribution, exploiting its hierarchical structure for efficiency.
 
     Parameters

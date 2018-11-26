@@ -98,8 +98,6 @@ def main():
             doub_orbs, doub_probs, doub_idx = heat_bath.doub_multin(
                 occ1_probs, occ2_probs, exch_probs, sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
             doub_probs *= p_doub * n_col[doub_idx]
-        elif args.dist == "heat-bath_PP" and args.sampl_mode == "fri":
-            pass
         else:
             raise RuntimeError("This sampling mode is not yet implemented for the specified distribution.")
 
@@ -197,7 +195,8 @@ def _parse_args():
                         help="Calculate Rayleigh quotient every 10 iterations")
     parser.add_argument('-i', '--max_iter', type=int, default=800000,
                         help="Number of iterations to simulate in the trajectory.")
-    parser.add_argument('-l', '--restart', type=str, help="Directory from which to load the vec_idx.npy and vec_val.npy files to initialize the solution vector.")
+    parser.add_argument('-l', '--restart', type=str,
+                        help="Directory from which to load the vec_idx.npy and vec_val.npy files to initialize the solution vector.")
 
     args = parser.parse_args()
     # process arguments and perform error checking

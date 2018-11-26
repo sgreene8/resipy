@@ -11,6 +11,7 @@ cimport cython
 from libc.math cimport sqrt, fabs, pow
 from libc.time cimport time
 
+
 cdef extern from "dc.h":
     ctypedef struct mt_struct:
         pass
@@ -52,7 +53,7 @@ def initialize_mt(unsigned int num_threads):
     for i in range(num_threads):
         mts = get_mt_parameter_id_st(32, 521, i, 4172)
         sgenrand_mt(0 * 1000 * i + 0 * time(NULL), mts)
-        ini_ptrs[i] = <unsigned long> mts
+        ini_ptrs[i] = <cunsigned long > mts
     return ini_ptrs
 
 
@@ -72,6 +73,7 @@ def bin_n_sing_doub(col_nsamp, p_doub):
     sing_samp = col_nsamp - doub_samp
     sing_samp = sing_samp.astype(numpy.uint32)
     return doub_samp, sing_samp
+
 
 def doub_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
                 unsigned char[:] orb_symm, unsigned char[:, :] lookup_tabl,
@@ -140,7 +142,7 @@ def doub_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
         tot_sampl = start_idx[det_idx]
         curr_det = dets[det_idx]
         thread_idx = threadid()
-        mts = <mt_struct *> mt_ptrs[thread_idx]
+        mts = < mt_struct * > mt_ptrs[thread_idx]
 
         _count_symm_virt(<unsigned int (*)[2]> &unocc_sym_counts[thread_idx, 0, 0], &occ_orbs[det_idx, 0],
                          num_elec, lookup_tabl, orb_symm)
@@ -441,7 +443,7 @@ def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
         curr_det = dets[det_idx]
         sampl_idx = start_idx[det_idx]
 
-        _count_symm_virt(<unsigned int (*)[2]> &unocc_sym_counts[thread_idx, 0, 0], &occ_orbs[det_idx, 0],
+        _count_symm_virt(< unsigned int (*)[2]> &unocc_sym_counts[thread_idx, 0, 0], &occ_orbs[det_idx, 0],
                          num_elec, lookup_tabl, orb_symm)
         delta_s = 0  # number of electrons with no symmetry-allowed excitations
         for elec_idx in range(num_elec):
@@ -601,14 +603,14 @@ cdef unsigned int _find_virt(long long det, unsigned char * symm_row,
 
     while symm_counter <= symm_idx:
         orbital = spin_shift + symm_row[col_idx]
-        if not(det & (<long long> 1 << orbital)):
+        if not(det & (< long long > 1 << orbital)):
             symm_counter += 1
         col_idx += 1
     return orbital
 
 
 def virt_symm_idx(long long[:] dets, unsigned char[:, :] lookup_tabl,
-                 unsigned char[:] chosen_symm, unsigned char[:] spin_shifts):
+                  unsigned char[:] chosen_symm, unsigned char[:] spin_shifts):
     '''Build lists of all virtual orbitals in each of an array of determinants
     with a particular spin and spatial symmetry.
     Parameters
@@ -646,15 +648,15 @@ def virt_symm_idx(long long[:] dets, unsigned char[:, :] lookup_tabl,
         symm_counter = 0
         for symm_idx in range(lookup_tabl[curr_symm, 0]):
             orbital = curr_shift + lookup_tabl[curr_symm, symm_idx + 1]
-            if not(curr_det & (<long long> 1 << orbital)):
+            if not(curr_det & (< long long > 1 << orbital)):
                 virt_orbs[det_idx, symm_counter] = orbital
                 symm_counter += 1
     return virt_orbs
 
 
 def virt_symm_bool(long long[:] dets, unsigned char[:, :] lookup_tabl,
-                 unsigned char[:] chosen_symm, unsigned char[:] spin_shifts,
-                 unsigned int n_orb):
+                   unsigned char[:] chosen_symm, unsigned char[:] spin_shifts,
+                   unsigned int n_orb):
     '''Calculate whether each of the spatial orbitals in a HF basis are unoccupied
     in each of a set of determinants, and whether they have a particular spatial
     symmetry.
@@ -693,7 +695,7 @@ def virt_symm_bool(long long[:] dets, unsigned char[:, :] lookup_tabl,
         curr_shift = spin_shifts[det_idx]
         for symm_idx in range(lookup_tabl[curr_symm, 0]):
             orbital = lookup_tabl[curr_symm, symm_idx + 1]
-            virt_orbs[det_idx, orbital] = not(curr_det & (<long long> 1 << (orbital + curr_shift)))
+            virt_orbs[det_idx, orbital] = not(curr_det & (< long long > 1 << (orbital + curr_shift)))
     return virt_orbs.astype(numpy.bool_)
 
 
@@ -727,9 +729,8 @@ cdef orb_pair _choose_occ_pair(unsigned char *occ_orbs, unsigned int num_elec, m
 cdef orb_pair _tri_to_occ_pair(unsigned char *occ_orbs, unsigned int num_elec, unsigned int tri_idx) nogil:
     # Use triangle inversion to convert an electron pair index into an orb_pair object
     cdef orb_pair pair
-    # cdef unsigned int num_elec = occ_orbs.shape[0]
-    cdef unsigned int orb_idx1 = <unsigned int> ((sqrt(tri_idx * 8. + 1) - 1) / 2)
-    cdef unsigned int orb_idx2 = <unsigned int> (tri_idx - orb_idx1 * (orb_idx1
+    cdef unsigned int orb_idx1 = < unsigned int > ((sqrt(tri_idx * 8. + 1) - 1) / 2)
+    cdef unsigned int orb_idx2 = < unsigned int > (tri_idx - orb_idx1 * (orb_idx1
                                                                        + 1.) / 2)
     orb_idx1 += 1
     pair.orb1 = occ_orbs[orb_idx1]
@@ -796,7 +797,7 @@ cdef unsigned int _doub_choose_virt1(orb_pair occ, long long det,
         orbital = 0
         while (virt_choice >= 0 and orbital < n_orb):
             # check that this orbital is unoccupied
-            if (not(det & (<long long> 1 << (orbital + a_spin * n_orb)))):
+            if (not(det & (< long long > 1 << (orbital + a_spin * n_orb)))):
                 a_symm = irreps[orbital]
                 n_virt2 = (virt_counts[sym_prod ^ a_symm][b_spin] -
                            (sym_prod == 0 and a_spin == b_spin))
@@ -809,7 +810,7 @@ cdef unsigned int _doub_choose_virt1(orb_pair occ, long long det,
             b_spin = 0
             while (virt_choice >= 0 and orbital < 2 * n_orb):
                 # check that this orbital is unoccupied
-                if (not(det & (<long long> 1 << orbital))):
+                if (not(det & (< long long > 1 << orbital))):
                     a_symm = irreps[orbital - n_orb]
                     n_virt2 = (virt_counts[sym_prod ^ a_symm][b_spin] -
                                (sym_prod == 0 and a_spin == b_spin))
@@ -847,7 +848,7 @@ cdef unsigned int _doub_choose_virt2(unsigned int spin_shift, long long det,
     # Search for chosen orbital
     while (orb_idx >= 0):
         orbital = symm_row[symm_idx] + spin_shift
-        if (not(det & (< long long> 1 << orbital)) and orbital != virt1):
+        if (not(det & (< long long > 1 << orbital)) and orbital != virt1):
             orb_idx -= 1
         symm_idx += 1
     return orbital
@@ -855,7 +856,7 @@ cdef unsigned int _doub_choose_virt2(unsigned int spin_shift, long long det,
 
 cdef unsigned int _choose_uint(mt_struct *mt_ptr, unsigned int nmax) nogil:
     # Choose an integer uniformly on the interval [0, nmax)
-    return <unsigned int> (genrand_mt(mt_ptr) / RAND_MAX * nmax)
+    return < unsigned int > (genrand_mt(mt_ptr) / RAND_MAX * nmax)
 
 
 def par_bernoulli(double[:] p, unsigned long[:] mt_ptrs):
@@ -873,4 +874,3 @@ def par_bernoulli(double[:] p, unsigned long[:] mt_ptrs):
         rn = genrand_mt(mt_ptr) / RAND_MAX
         samples[samp_idx] = rn < p[samp_idx]
     return samples
-

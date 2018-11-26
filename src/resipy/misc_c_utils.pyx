@@ -6,6 +6,7 @@ cimport cython
 cimport openmp
 from cython.parallel import prange, threadid, parallel
 
+
 def dot_sorted(long long[:] ind1, double[:] val1, long long[:] ind2, double[:] val2):
     """Calculate dot product of 2 vectors in sparse format.
 
@@ -214,22 +215,22 @@ def merge_sorted_doub(long long[:] ind1, double[:] val1, long long[:] ind2, doub
 
 def ind_from_count(unsigned int[:] counts):
     """Returns a vector of indices 0, 1, 2, ... in order, each repeated a number
-	of times as specified in the counts argument.
+    of times as specified in the counts argument.
 
-	Parameters
-	----------
-	counts : (numpy.ndarray, uint32)
-	    number of times to repeat each index
+    Parameters
+    ----------
+    counts : (numpy.ndarray, uint32)
+        number of times to repeat each index
 
-	Returns
-	-------
-	(numpy.ndarray, uint32) : 
-	    vector of indices, with a size of numpy.sum(counts)
+    Returns
+    -------
+    (numpy.ndarray, uint32) :
+        vector of indices, with a size of numpy.sum(counts)
 
-	Example
-	-------
-	>>> fci_c_utils.ind_from_count(numpy.array([3, 1, 4, 1]))
-	array([0, 0, 0, 1, 2, 2, 2, 2, 3])
+    Example
+    -------
+    >>> fci_c_utils.ind_from_count(numpy.array([3, 1, 4, 1]))
+    array([0, 0, 0, 1, 2, 2, 2, 2, 3])
 """
 
     cdef size_t tot_num = numpy.sum(counts)
@@ -256,7 +257,7 @@ def seq_from_count(unsigned int[:] counts):
 
     Returns
     -------
-    (numpy.ndarray, uint32) : 
+    (numpy.ndarray, uint32) :
         vector of sequences, with a size of numpy.sum(counts)
 
     Example
@@ -280,21 +281,21 @@ def seq_from_count(unsigned int[:] counts):
 
 @cython.wraparound(True)
 def setup_alias(probs):
-    '''Calculate the probabilities Q(i) and aliases A(i) needed to perform multinomial sampling, 
-	by the alias method, as described in Appendix D of Holmes et al. (2016).
+    '''Calculate the probabilities Q(i) and aliases A(i) needed to perform multinomial sampling,
+    by the alias method, as described in Appendix D of Holmes et al. (2016).
 
-	Parameters
-	----------
-	probs : (numpy.ndarray, float64)
-	    Probability array with any number of dimensions. Sum along the last index must be 1
+    Parameters
+    ----------
+    probs : (numpy.ndarray, float64)
+        Probability array with any number of dimensions. Sum along the last index must be 1
 
-	Returns
-	-------
-	(numpy.ndarray, uint32) : 
-	    has the same shape as probs, aliases of states in probs array
-	(numpy.ndarray, float64) : 
-	    has the same same as probs, probability of returning the state instead
-	    of its alias.
+    Returns
+    -------
+    (numpy.ndarray, uint32) :
+        has the same shape as probs, aliases of states in probs array
+    (numpy.ndarray, float64) :
+        has the same same as probs, probability of returning the state instead
+        of its alias.
     '''
     p_shape = probs.shape
     probs.shape = (-1, p_shape[-1])
@@ -302,7 +303,7 @@ def setup_alias(probs):
     probs.shape = p_shape
     alias.shape = p_shape
     Q.shape = p_shape
-    
+
     return alias, Q
 
 
@@ -359,7 +360,7 @@ def linsearch_2D(double[:, :] search_lists, unsigned int[:] row_idx,
         indices of rows to search
     search_vals : (numpy.ndarray, float64)
         values to search
-    
+
     Returns
     -------
     (numpy.ndarray, uint32)
@@ -391,13 +392,13 @@ def _alias_2D(double[:, :] probs):
     cdef unsigned int num_states = probs.shape[1]
     cdef size_t i
     cdef unsigned int j
-    cdef numpy.ndarray[numpy.uint32_t, ndim = 2] aliases = numpy.zeros([num_sys, num_states], dtype=numpy.uint32)
-    cdef numpy.ndarray[numpy.float64_t, ndim = 2] Q = numpy.zeros([num_sys, num_states], dtype=numpy.float64)
+    cdef numpy.ndarray[numpy.uint32_t, ndim=2] aliases = numpy.zeros([num_sys, num_states], dtype=numpy.uint32)
+    cdef numpy.ndarray[numpy.float64_t, ndim=2] Q = numpy.zeros([num_sys, num_states], dtype=numpy.float64)
 
     cdef unsigned int thread_idx
     cdef unsigned int n_threads = openmp.omp_get_max_threads()
-    cdef numpy.ndarray[numpy.uint32_t, ndim = 2] smaller = numpy.zeros([n_threads, num_states], dtype=numpy.uint32)
-    cdef numpy.ndarray[numpy.uint32_t, ndim = 2] bigger = numpy.zeros([n_threads, num_states], dtype=numpy.uint32)
+    cdef numpy.ndarray[numpy.uint32_t, ndim=2] smaller = numpy.zeros([n_threads, num_states], dtype=numpy.uint32)
+    cdef numpy.ndarray[numpy.uint32_t, ndim=2] bigger = numpy.zeros([n_threads, num_states], dtype=numpy.uint32)
 
     for j in prange(num_sys, nogil=True, schedule=static, num_threads=n_threads):
         n_s = 0
@@ -428,48 +429,3 @@ def _alias_2D(double[:, :] probs):
                 Q[j, i] = 1.
 
     return aliases, Q
-
-
-# def fri_big_idx(numpy.ndarray[numpy.float64_t] weights, unsigned int[:] num_div, double[:, :] sub_weights,
-#                 unsigned int n_samp):
-#     cdef size_t num_uni = num_div.shape[0]
-#     cdef size_t num_nonuni = sub_weights.shape[0]
-#     cdef size_t num_subdiv = sub_weights.shape[1]
-#     cdef size_t heap_size = num_uni + num_nonuni * num_subdiv
-#     cdef numpy.ndarray[numpy.uint8_t] uni_keep = numpy.zeros(num_uni, dtype=numpy.uint8)
-#     cdef numpy.ndarray[numpy.uint8_t, ndim=2] nonuni_keep = numpy.zeros([num_nonuni, num_subdiv], dtype=numpy.uint8)
-#     cdef double one_norm = weights.sum()
-
-#     cdef numpy.ndarray[numpy.float64_t] new_weights = numpy.zeros(heap_size)
-#     new_weights[:num_uni] = weights[:num_uni] / num_div
-#     nonuni_weights = sub_weights * weights[num_uni:, numpy.newaxis]
-#     nonuni_weights.shape = -1
-#     new_weights[num_uni:] = nonuni_weights
-
-#     cdef numpy.ndarray[numpy.uint32_t] new_idx = numpy.arange(heap_size, dtype=numpy.uint32)
-
-#     heapify(&new_weights[0], &new_idx[0], heap_size)
-
-#     cdef unsigned int n_chosen = 0
-#     cdef double max_wt = new_weights[0]
-#     cdef unsigned int max_idx = new_idx[0]
-
-#     while max_wt >= one_norm / (n_samp - n_chosen) and one_norm > 1e-9:
-#         if max_idx > num_uni:
-#             max_idx -= num_uni
-#             nonuni_keep[max_idx / num_subdiv, max_idx % num_subdiv] = 1
-#             sub_weights[max_idx / num_subdiv, max_idx % num_subdiv] = 0
-#             n_chosen += 1
-#             one_norm -= max_wt
-#         else:
-#             uni_keep[max_idx] = 1
-#             n_chosen += num_div[max_idx]
-#             one_norm -= weights[max_idx]
-#             weights[max_idx] = 0
-
-#         pop(&new_weights[0], &new_idx[0], heap_size)
-#         heap_size -= 1
-#         max_wt = new_weights[0]
-#         max_idx = new_idx[0]
-
-#     return uni_keep.astype(numpy.bool_), nonuni_keep.astype(numpy.bool_)

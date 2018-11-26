@@ -129,4 +129,3 @@ def read_in_hf(hf_path, n_frozen):
     hf_en = numpy.genfromtxt(hf_path + 'hf_en.txt')
 
     return h_core, eris, symm, hf_en
-

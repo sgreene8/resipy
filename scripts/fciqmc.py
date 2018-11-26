@@ -185,7 +185,8 @@ def _parse_args():
                         help="Calculate Rayleigh quotient every A iterations")
     parser.add_argument('-i', '--max_iter', type=int, default=800000,
                         help="Number of iterations to simulate in the trajectory.")
-    parser.add_argument('-l', '--restart', type=str, help="Directory from which to load the vec_idx.npy and vec_val.npy files to initialize the solution vector.")
+    parser.add_argument('-l', '--restart', type=str,
+                        help="Directory from which to load the vec_idx.npy and vec_val.npy files to initialize the solution vector.")
 
     args = parser.parse_args()
     # process arguments and perform error checking

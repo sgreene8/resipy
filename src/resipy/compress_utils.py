@@ -245,7 +245,7 @@ def sys_subd(weights, counts, sub_weights, nsample):
     return ret_idx
 
 
-def round_binomially(vec, num_round, mt_ptrs):
+def round_binomially(vec, num_round):
     """Round non-integer entries in vec to integer entries in b such that
     b[i] ~ (binomial(num_round[i], vec[i] - floor(vec[i])) + floor(vec[i])
             * num_round)
@@ -256,8 +256,6 @@ def round_binomially(vec, num_round, mt_ptrs):
     num_round : (numpy.ndarray, unsigned int)
         parameter of the binomial distribution for each entry in vec, must
         have same shape as vec
-    mt_ptrs : (numpy.ndarray, uint64)
-        List of addresses to MT state objects to use for RN generation
     Returns
     -------
     (numpy.ndarray, int)
@@ -267,7 +265,7 @@ def round_binomially(vec, num_round, mt_ptrs):
     flr_vec = numpy.floor(vec)
     flr_vec = flr_vec.astype(numpy.int32)
     n = num_round.astype(numpy.uint32)
-    b = flr_vec * num_round + near_uniform.par_binomial(n, vec - flr_vec, mt_ptrs)
+    b = flr_vec * num_round + numpy.random.binomial(n, vec - flr_vec).astype(numpy.int32)
     return b
 
 

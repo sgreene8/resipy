@@ -10,7 +10,7 @@ import near_uniform
 
 
 def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
-                 orb_symm, symm_lookup):
+             orb_symm, symm_lookup):
     """Perform FRI-type compression on the Near-Uniform distribution,
     exploiting its hierarchical structure for efficiency.
 
@@ -96,7 +96,7 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
                                                                det_idx[n_sing:], occ_idx[n_sing:])
 
     fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, virt_allow[det_idx[:n_sing], occ_idx[:n_sing]],
-                                                    doub_wts, n_sample)
+                                                doub_wts, n_sample)
     n_fried = fri_idx.shape[0]
     sampl_idx = fri_idx[:, 0]
     # Group nonzero elements in FRI vector by single/double excitations
@@ -135,7 +135,7 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
     sing_orb[:, 0] = sing_occ
     n_orb = orb_symm.shape[0]
     virt_choices = near_uniform.virt_symm_idx(sol_vec.indices[sing_det_idx], symm_lookup,
-                                               orb_symm[sing_occ % n_orb], (sing_occ / n_orb) * n_orb)
+                                              orb_symm[sing_occ % n_orb], (sing_occ / n_orb) * n_orb)
     tmp_idx = numpy.arange(n_sing, dtype=numpy.uint32)
     sing_orb[:, 1] = virt_choices[tmp_idx, virt_idx[sampl_idx[sing_idx]]]
     sing_probs = ((1 - p_doub) / occ_allow[sing_det_idx, 0] / virt_allow[sing_det_idx, sing_orb_idx]
