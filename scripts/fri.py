@@ -28,12 +28,21 @@ def main():
     hf_det = fci_utils.gen_hf_bitstring(n_orb, args.n_elec - args.frozen)
 
     # Initialize solution vector
-    ini_idx = numpy.array([hf_det], dtype=numpy.int64)
-    sol_vec = sparse_vector.SparseVector(ini_idx, numpy.array([1.]))
+    if args.restart:
+        ini_idx = numpy.load(args.restart + 'vec_idx.npy')
+        vec_val = numpy.load(args.restart + 'vec_val.npy')
+        en_shift = numpy.genfromtxt(args.restart + 'S.txt')[-1]
+        last_norm = numpy.abs(vec_val).sum()
+    else:
+        ini_idx = numpy.array([hf_det], dtype=numpy.int64)
+        ini_val = numpy.array([1.])
+        # energy shift for controlling normalization
+        en_shift = args.initial_shift
+        last_norm = 0
+
+    sol_vec = sparse_vector.SparseVector(ini_idx, ini_val)
     occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, 2 * n_orb, args.n_elec -
                                          args.frozen, byte_nums, byte_idx)
-    last_norm = 1.
-    en_shift = 0.
 
     results = io_utils.setup_results(args.result_int, args.result_dir,
                                      args.rayleigh, False)
@@ -188,6 +197,7 @@ def _parse_args():
                         help="Calculate Rayleigh quotient every 10 iterations")
     parser.add_argument('-i', '--max_iter', type=int, default=800000,
                         help="Number of iterations to simulate in the trajectory.")
+    parser.add_argument('-l', '--restart', type=str, help="Directory from which to load the vec_idx.npy and vec_val.npy files to initialize the solution vector.")
 
     args = parser.parse_args()
     # process arguments and perform error checking

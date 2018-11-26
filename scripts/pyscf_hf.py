@@ -10,7 +10,7 @@ import os
 
 
 def main():
-    supported_mols = ["B2", "N2", "Ne", "Be", "HF", "Li", "O", "H2", "H2O"]
+    supported_mols = ["B2", "N2", "Ne", "Be", "HF", "Li", "O", "H2", "H2O", "C2"]
     args = _parse_args(supported_mols)
     mol_name = args.molecule
 
@@ -40,7 +40,7 @@ def main():
     elif mol_name == supported_mols[4]:
         mol.atom = [['H', (0, 0, -0.870056)], ['F', (0, 0, 0.0461636)]]
         mol.basis = 'cc-pcvdz'
-        mol.symmetry = 'd2h'
+        mol.symmetry = 'c2v'
 
     elif mol_name == supported_mols[5]:
         mol.atom = [['Li', (0, 0, 0)]]
@@ -63,6 +63,11 @@ def main():
             'H', (-0.342668, 0.913347, 0)], ['H', (0.342668, 0.913347, 0)]]
         mol.basis = 'cc-pvdz'
         mol.symmetry = 'c2v'
+
+    elif mol_name == supported_mols[9]:
+        mol.atom = [['C', (0, 0, -0.636365)], ['C', (0, 0, 0.636365)]]
+        mol.basis = 'cc-pvdz'
+        mol.symmetry = 'd2h'
 
     mol.build()
 

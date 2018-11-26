@@ -858,40 +858,6 @@ cdef unsigned int _choose_uint(mt_struct *mt_ptr, unsigned int nmax) nogil:
     return <unsigned int> (genrand_mt(mt_ptr) / RAND_MAX * nmax)
 
 
-def par_binomial(numpy.ndarray[numpy.uint32_t] n, double[:] p,
-                 unsigned long[:] mt_ptrs):
-    cdef size_t n_samp = n.shape[0]
-    cdef size_t samp_idx
-    cdef unsigned int n_threads = mt_ptrs.shape[0]
-    cdef numpy.ndarray[numpy.int32_t] samples = numpy.zeros(n_samp, dtype=numpy.int32)
-    cdef double rn, cdf, curr_p, curr_omp
-    cdef unsigned int nci, i, curr_n, thread_idx
-    cdef mt_struct *mt_ptr
-    cdef unsigned int num_threads = mt_ptrs.shape[0]
-
-    for samp_idx in prange(n_samp, nogil=True, schedule=static, num_threads=n_threads):
-        thread_idx = threadid()
-        mt_ptr = <mt_struct * > mt_ptrs[thread_idx]
-        rn = genrand_mt(mt_ptr) / RAND_MAX
-        curr_n = n[samp_idx]
-        
-        i = 0
-        nci = 1
-        curr_p = 1.
-        curr_omp = pow(1. - p[samp_idx], curr_n)
-        cdf = nci * curr_p * curr_omp
-
-        while cdf <= rn:
-            i = i + 1
-            nci = nci * (curr_n + 1 - i) / i
-            curr_p = curr_p * p[samp_idx]
-            curr_omp = curr_omp / (1 - p[samp_idx])
-            cdf = cdf + nci * curr_p * curr_omp
-
-        samples[samp_idx] = i
-    return samples
-
-
 def par_bernoulli(double[:] p, unsigned long[:] mt_ptrs):
     cdef size_t n_samp = p.shape[0]
     cdef size_t samp_idx

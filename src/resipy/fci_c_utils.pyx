@@ -8,7 +8,6 @@ information.
 import numpy
 cimport numpy
 from cython.parallel import prange
-from libc.stdio cimport printf
 
 def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec,
                   unsigned char[:] lookup_nums, unsigned char[:, :] lookup_idx):

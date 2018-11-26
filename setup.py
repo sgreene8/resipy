@@ -103,7 +103,7 @@ setup(
         Extension(
             splitext(relpath(path, 'src').replace(os.sep, '.'))[0],
             sources=[path],
-            include_dirs=[dirname(path), numpy.get_include(), "dcmt"],
+            include_dirs=[dirname(path), numpy.get_include(), "dcmt", "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.14.sdk/usr/include"],
             libraries=["m", "dcmt"],
             extra_compile_args = ["-O3", "-ffast-math", "-march=native", "-fopenmp" ],
             extra_link_args=['-fopenmp'],

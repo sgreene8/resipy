@@ -28,14 +28,21 @@ def main():
     hf_det = fci_utils.gen_hf_bitstring(n_orb, args.n_elec - args.frozen)
 
     # Initialize solution vector
-    ini_idx = numpy.array([hf_det], dtype=numpy.int64)
-    ini_val = numpy.array([args.walkers], dtype=numpy.int32)
+    if args.restart:
+        ini_idx = numpy.load(args.restart + 'vec_idx.npy')
+        vec_val = numpy.load(args.restart + 'vec_val.npy')
+        en_shift = numpy.genfromtxt(args.restart + 'S.txt')[-1]
+        last_nwalk = numpy.abs(vec_val).sum()
+    else:
+        ini_idx = numpy.array([hf_det], dtype=numpy.int64)
+        ini_val = numpy.array([args.walkers], dtype=numpy.int32)
+        # energy shift for controlling normalization
+        en_shift = args.initial_shift
+        last_nwalk = 0  # number of walkers at the time of previous shift update
+
     sol_vec = sparse_vector.SparseVector(ini_idx, ini_val)
     occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, 2 * n_orb, args.n_elec -
                                          args.frozen, byte_nums, byte_idx)
-    last_nwalk = 0  # number of walkers at the time of previous shift update
-    # energy shift for controlling normalization
-    en_shift = args.initial_shift
 
     results = io_utils.setup_results(args.result_int, args.result_dir,
                                      args.rayleigh, True, args.interval)
@@ -49,7 +56,6 @@ def main():
         occ1_probs, occ2_probs, exch_probs = heat_bath.set_up(args.frozen, eris)
 
     rngen_ptrs = near_uniform.initialize_mt(args.procs)
-    numpy.random.seed(0)
 
     # Elements in the HF column of FCI matrix
     hf_col = fci_utils.gen_hf_ex(
@@ -101,7 +107,7 @@ def main():
         sing_matrel = sing_matrel[sing_nonz]
         sing_orbs = sing_orbs[sing_nonz]
 
-        sing_signs = fci_utils.excite_signs(sing_orbs[:, 1], sing_orbs[:, 0], sing_dets)
+        sing_signs = fci_c_utils.excite_signs(sing_orbs[:, 1], sing_orbs[:, 0], sing_dets)
         sing_matrel *= -numpy.sign(sol_vec.values[sing_idx]) * sing_signs
 
         spawn_dets = numpy.append(doub_dets, sing_dets)
@@ -123,8 +129,10 @@ def main():
         occ_orbs = fci_c_utils.gen_orb_lists(next_vec.indices, 2 * n_orb, args.n_elec -
                                              args.frozen, byte_nums, byte_idx)
         n_walk = next_vec.one_norm()
-        en_shift, last_nwalk = _adjust_shift(
-            en_shift, n_walk, last_nwalk, args.walker_target, args.damping / args.interval / args.epsilon)
+        if iterat % args.interval == 0:
+            en_shift, last_nwalk = _adjust_shift(
+                en_shift, n_walk, last_nwalk, args.walker_target, args.damping / args.interval / args.epsilon)
+
         io_utils.calc_results(results, next_vec, en_shift, iterat, hf_col)
         sol_vec = next_vec
 
@@ -177,6 +185,7 @@ def _parse_args():
                         help="Calculate Rayleigh quotient every A iterations")
     parser.add_argument('-i', '--max_iter', type=int, default=800000,
                         help="Number of iterations to simulate in the trajectory.")
+    parser.add_argument('-l', '--restart', type=str, help="Directory from which to load the vec_idx.npy and vec_val.npy files to initialize the solution vector.")
 
     args = parser.parse_args()
     # process arguments and perform error checking
@@ -186,6 +195,9 @@ def _parse_args():
 
     if args.result_dir[-1] != '/':
         args.result_dir += '/'
+
+    if args.restart and args.restart[-1] != '/':
+        args.restart += '/'
 
     if args.n_elec <= 0:
         raise ValueError(
@@ -207,10 +219,6 @@ def _parse_args():
         raise ValueError(
             "The target number of walkers (%d) must be > 0." % args.walker_target)
 
-    if args.result_int % args.interval != 0:
-        raise ValueError("The interval for saving results (%d) must be an integer multiple of the interval for updating the shift (%d)." % (
-            args.result_int, args.interval))
-
     return args
 
 
@@ -218,8 +226,10 @@ def _describe_args(arg_dict):
     path = arg_dict.result_dir + 'params.txt'
     with open(path, "w") as file:
         file.write("FCIQMC calculation\n")
-        file.write("HF path: " + arg_dict.hf_path)
-        file.write("\nepsilon (imaginary time step): {}\n".format(arg_dict.epsilon))
+        file.write("HF path: " + arg_dict.hf_path + "\n")
+        if arg_dict.restart:
+            file.write("Restarting calculation from {}\n".format(arg_dict.restart))
+        file.write("epsilon (imaginary time step): {}\n".format(arg_dict.epsilon))
         file.write("Target number of walkers: {}\n".format(arg_dict.walker_target))
 
 

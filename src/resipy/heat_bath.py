@@ -9,7 +9,6 @@ import fci_utils
 import compress_utils
 import misc_c_utils
 import near_uniform
-from numba import jit
 
 
 def set_up(frozen, eris):

@@ -7,21 +7,6 @@ import numpy
 import misc_c_utils
 
 
-def _uniquify(idx, val, ins_idx):
-    # Remove repeated indices in sparse representation of vector
-    # and update ins_idx accordingly
-    # The returned indices (uni_idx) are sorted
-    if ins_idx is None:
-    	uni_idx, uni_inv = numpy.unique(idx, return_inverse=True)
-    else:
-    	uni_idx, orig_idx, uni_inv = numpy.unique(idx, return_index=True, return_inverse=True)
-    	ins_idx = ins_idx[orig_idx]
-
-    uni_val = numpy.zeros_like(uni_idx, dtype=val.dtype)
-    numpy.add.at(uni_val, uni_inv, val)
-    return uni_idx, uni_val, ins_idx
-
-
 class SparseVector(object):
     """
     Sparse representation of a vector with included methods for manipulating vectors.
@@ -56,6 +41,7 @@ class SparseVector(object):
             raise TypeError("Dtype %s not yet supported in SparseVector class", self.values.dtype)
         self.indices = new_idx
         self.values = new_val
+
 
     def dot(self, vec):
         """
