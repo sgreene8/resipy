@@ -109,8 +109,7 @@ def _cs_symm_wts(sampl_virt, sampl_occ, symm, all_dets, exch_tens,
     # Normalize, and identify non-null excitations
     norms = symm_wts.sum(axis=1)
     nonnull = norms > 1e-8
-    norms = 1. / norms[nonnull]
-    symm_wts = symm_wts[numpy.where(nonnull)]  # * norms[:, numpy.newaxis]
+    norms = 1. / norms
     norms.shape = (-1, 1)
     symm_wts *= norms
 
@@ -163,6 +162,153 @@ def fri_comp(sol_vec, n_nonz, s_tens, d_tens, exch_tens, p_doub, occ_orbs, orb_s
         index of the origin determinant of each chosen single excitation
          in the dets array
     """
+    n_orb = orb_symm.shape[0]
+    seq_idx = numpy.arange(n_nonz, dtype=numpy.int32)
+    symm_virt = near_uniform.virt_symm(occ_orbs, orb_symm, lookup_tabl)
+    occ_allow, virt_allow = near_uniform.sing_allow(symm_virt, occ_orbs,
+                                                    orb_symm)
+    # First layer of compression: singles vs. doubles
+    sing_doub = numpy.array([[1 - p_doub], [p_doub]])
+    num_dets = sol_vec.values.shape[0]
+    new_weights = sing_doub * sol_vec.values
+    new_weights.shape = -1  # singles first, then doubles
+
+    fri_idx, fri_vals = compress_utils.fri_1D(new_weights, n_nonz)
+    det_idx = fri_idx % num_dets  # index of determinant
+    det_idx = det_idx.astype(numpy.uint32)
+    n_sing = numpy.searchsorted(fri_idx, num_dets)
+
+    # Second layer of compression: occupied orbitals for each choice
+    counts = occ_allow[det_idx[:n_sing], 0].astype(numpy.uint32)
+    disallowed_ex = counts == 0
+    fri_vals[:n_sing][disallowed_ex] = 0
+    counts[disallowed_ex] = 1  # to avoid 0/0 errors
+
+    o1_probs = s_tens[occ_orbs[det_idx[n_sing:]]]
+    norms = 1. / o1_probs.sum(axis=1)
+    o1_probs *= norms[:, numpy.newaxis]
+
+    fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, counts, o1_probs, n_nonz)
+    sampl_idx = fri_idx[:, 0]
+    doub_idx_shift = n_sing
+
+    # sampl_idx isn't necessarily sorted, but that's ok because single excitation elements come first
+    n_sing = numpy.searchsorted(sampl_idx, n_sing)
+    det_idx = det_idx[sampl_idx]
+    occ_idx = occ_allow[det_idx[:n_sing], fri_idx[:n_sing, 1] + 1]
+    occ_doub = fri_idx[n_sing:, 1]
+    occ_idx = numpy.append(occ_idx, occ_doub)  # index of occupied orbital
+    doub_sampl_idx = sampl_idx[n_sing:] - doub_idx_shift
+    occ_doub_probs = o1_probs[doub_sampl_idx, occ_doub]
+
+    # Third layer of compression: allowed virtual orbitals for singles, second occ orbital for doubles
+    occ_expand = occ_orbs[det_idx[n_sing:]]
+    doub_o1 = occ_orbs[det_idx[n_sing:], occ_idx[n_sing:]]
+    doub_o1.shape = (-1, 1)
+    o2_probs = d_tens[doub_o1, occ_expand]
+    doub_o1.shape = -1
+    norms = 1. / o2_probs.sum(axis=1)
+    o2_probs *= norms[:, numpy.newaxis]
+
+    fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, virt_allow[det_idx[:n_sing], occ_idx[:n_sing]],
+                                                o2_probs, n_nonz)
+
+    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(fri_idx[:, 0], n_sing, [det_idx, occ_idx], [], [doub_o1, occ_doub_probs, o2_probs])
+    det_idx, occ_idx = all_arrs
+    doub_o1, occ_doub_probs, o2_probs = doub_arrs
+
+    sing_virt_idx = fri_idx[:n_sing, 1]
+    doub_o2_idx = fri_idx[n_sing:, 1]
+    doub_o2 = occ_orbs[det_idx[n_sing:], doub_o2_idx]
+    occ_doub_probs *= o2_probs[seq_idx[:o2_probs.shape[0]], doub_o2_idx]
+
+    # Fourth layer of compression: first virtual orbital for doubles
+    virt1_wts = _cs_virt_wts(doub_o1, det_idx[n_sing:], exch_tens, occ_orbs)
+
+    fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, numpy.ones(n_sing, dtype=int), virt1_wts, n_nonz)
+
+    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(fri_idx[:, 0], n_sing, [det_idx, occ_idx], [sing_virt_idx], [doub_o1, doub_o2, occ_doub_probs, virt1_wts])
+    det_idx, occ_idx = all_arrs
+    sing_virt_idx = sing_arrs[0]
+    doub_o1, doub_o2, occ_doub_probs, virt1_wts = doub_arrs
+
+    spin_o1 = (doub_o1 / n_orb) * n_orb
+    doub_u1 = fri_idx[n_sing:, 1]
+    unocc_doub_probs = virt1_wts[seq_idx[:doub_o2.shape[0]], doub_u1]
+
+    virt2_symm = (orb_symm[doub_o1 % n_orb] ^ orb_symm[doub_o2 % n_orb]
+                  ^ orb_symm[doub_u1])
+    doub_u1 += spin_o1
+
+    # Fifth layer of compression: second virtual orbital for doubles
+    dets = sol_vec.indices[det_idx[n_sing:]]
+    virt2_wts, nonnull = _cs_symm_wts(doub_u1, doub_o2, virt2_symm, dets, exch_tens, lookup_tabl)
+    # Exclude null excitation
+    fri_vals[n_sing:][numpy.logical_not(nonnull)] = 0
+
+    fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, numpy.ones(n_sing, dtype=int), virt2_wts, n_nonz)
+
+    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(fri_idx[:, 0], n_sing, [det_idx, occ_idx], [sing_virt_idx], [doub_o1, spin_o1, doub_o2, doub_u1, occ_doub_probs, unocc_doub_probs, virt2_wts])
+    det_idx, occ_idx = all_arrs
+    sing_virt_idx = sing_arrs[0]
+    doub_o1, spin_o1, doub_o2, doub_u1, occ_doub_probs, unocc_doub_probs, virt2_wts = doub_arrs
+    n_doub = doub_o1.shape[0]
+
+    spin_o2 = (doub_o2 / n_orb) * n_orb
+    doub_u2 = fri_idx[n_sing:, 1]
+    unocc_doub_probs *= virt2_wts[seq_idx[:n_doub], doub_u2]
+    doub_u2 += spin_o2
+
+    # process single excitations
+    sing_det_idx = det_idx[:n_sing]
+    sing_occ = occ_orbs[sing_det_idx, occ_idx[:n_sing]]
+    virt_choices = near_uniform.virt_symm_idx(sol_vec.indices[sing_det_idx], lookup_tabl,
+                                              orb_symm[sing_occ % n_orb], (sing_occ / n_orb) * n_orb)
+    sing_orb = numpy.zeros([n_sing, 2], dtype=numpy.uint8)
+    sing_orb[:, 0] = sing_occ
+    sing_orb[:, 1] = virt_choices[seq_idx[:n_sing], sing_virt_idx]
+    sing_probs = ((1 - p_doub) / occ_allow[sing_det_idx, 0] / virt_allow[sing_det_idx, occ_idx[:n_sing]]
+                  * sol_vec.values[sing_det_idx] / fri_vals[:n_sing])
+
+    # process double excitations
+    doub_det_idx = det_idx[n_sing:]
+
+    doub_occ = numpy.zeros([n_doub, 2], dtype=numpy.uint8)
+    doub_occ[:, 0] = doub_o1
+    doub_occ[:, 1] = doub_o2
+    doub_occ.sort(axis=1)
+    doub_unocc = numpy.zeros([n_doub, 2], dtype=numpy.uint8)
+    doub_unocc[:, 0] = doub_u1
+    doub_unocc[:, 1] = doub_u2
+    doub_unocc.sort(axis=1)
+    doub_orb = numpy.append(doub_occ, doub_unocc, axis=1)
+
+    norms = 1. / s_tens[occ_orbs[doub_det_idx]].sum(axis=1)
+    alt_doub_occ = s_tens[doub_o2] * norms
+
+    alt_doub_occ = d_tens[doub_o2 % n_orb, doub_o1 % n_orb] / d_tens[doub_o2[:, numpy.newaxis] % n_orb, occ_orbs[doub_det_idx]].sum(axis=1)
+
+    same_spin = spin_o1 == spin_o2
+    doub_o1 = doub_o1[same_spin]
+    doub_o2 = doub_o2[same_spin]
+    doub_u1 = doub_u1[same_spin]
+    doub_u2 = doub_u2[same_spin]
+    virt1_wts_rev = _cs_virt_wts(doub_o2, doub_det_idx[same_spin], exch_tens, occ_orbs)
+    n_same = doub_u2.shape[0]
+    alt_doub_unoccc = virt1_wts_rev[seq_idx[:n_same], doub_u2 % n_orb]
+
+    virt2_symm = (orb_symm[doub_o1 % n_orb] ^ orb_symm[doub_o2 % n_orb] ^
+                  orb_symm[doub_u2 % n_orb])
+    dets = sol_vec.indices[doub_det_idx[same_spin]]
+    virt2_wts_rev, nonnull = _cs_symm_wts(doub_u2, doub_o1, virt2_symm, dets, exch_tens, lookup_tabl)
+    alt_doub_unoccc *= virt2_wts_rev[seq_idx[:n_same], doub_u1 % n_orb]
+
+    occ_doub_probs += alt_doub_occ
+    unocc_doub_probs[same_spin] += alt_doub_unoccc
+
+    doub_probs = p_doub * occ_doub_probs * unocc_doub_probs * sol_vec.values[doub_det_idx] / fri_vals[n_sing:]
+
+    return doub_orb, doub_probs, doub_det_idx, sing_orb, sing_probs, sing_det_idx
 
 
 def doub_multin(s_tens, d_tens, exch_tens, dets, occ_orbs, orb_symm, lookup_tabl, n_sampl, mt_ptrs):
@@ -202,7 +348,6 @@ def doub_multin(s_tens, d_tens, exch_tens, dets, occ_orbs, orb_symm, lookup_tabl
         index of the origin determinant of each chosen excitation in the
         dets array
     """
-    # print('hello world!')
     det_idx = misc_c_utils.ind_from_count(n_sampl)
     tot_sampl = det_idx.shape[0]
     n_orb = s_tens.shape[0] / 2
@@ -234,6 +379,7 @@ def doub_multin(s_tens, d_tens, exch_tens, dets, occ_orbs, orb_symm, lookup_tabl
     occ_probs = occ_probs[nonnull]
     unocc_probs = unocc_probs[nonnull]
     unocc1_orbs = unocc1_orbs[nonnull]
+    virt2_wts = virt2_wts[nonnull]
     tot_sampl = unocc_probs.shape[0]
 
     alias, Q = misc_c_utils.setup_alias(virt2_wts)
@@ -319,11 +465,7 @@ def _multi_occ_pair(s_tens, d_tens, occ_orbs, n_sampl, idx, mt_ptrs):
     chosen_orbs[n_hf:, 1] = occ_expand[tmp_idx, o2_idx]
     chosen_probs[n_hf:, 1] = o1_probs[idx[n_hf:] - 1, o2_idx]
     chosen_probs[n_hf:, 0] *= o2_probs[tmp_idx, o2_idx]
-    hf_o2_probs = d_tens[chosen_orbs[n_hf:, 1:2], occ_expand]
-    norms = hf_o2_probs.sum(axis=1)
-    norms.shape = (-1, 1)
-    hf_o2_probs /= norms
-    chosen_probs[n_hf:, 1] *= hf_o2_probs[tmp_idx, o1_idx]
+    chosen_probs[n_hf:, 1] *= d_tens[chosen_orbs[n_hf:, 1], chosen_orbs[n_hf:, 0]] / d_tens[chosen_orbs[n_hf:, 1:2], occ_expand].sum(axis=1)
 
     chosen_orbs.sort(axis=1)
 

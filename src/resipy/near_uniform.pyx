@@ -53,7 +53,7 @@ def initialize_mt(unsigned int num_threads):
     for i in range(num_threads):
         mts = get_mt_parameter_id_st(32, 521, i, 4172)
         sgenrand_mt(0 * 1000 * i + 0 * time(NULL), mts)
-        ini_ptrs[i] = <cunsigned long > mts
+        ini_ptrs[i] = < unsigned long > mts
     return ini_ptrs
 
 
@@ -254,7 +254,7 @@ def sing_allow(unsigned int[:, :, :] virt_counts, unsigned char[:, :] occ_orbs,
     -------
     (numpy.ndarray, uint8)
         2-D array with the 0th column as number of occupied orbitals
-        that can be chosen for each determinant and the 1st column
+        that can be chosen for each determinant and the remaining columns
         as the indices of these allowed orbitals
     (numpy.ndarray, uint8)
         2-D array with number of virtual orbitals that can be chosen

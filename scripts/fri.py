@@ -38,14 +38,15 @@ def main():
         ini_val = numpy.array([1.])
         # energy shift for controlling normalization
         en_shift = args.initial_shift
-        last_norm = 0
+        last_norm = 1.
+    one_norm = last_norm
 
     sol_vec = sparse_vector.SparseVector(ini_idx, ini_val)
     occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, 2 * n_orb, args.n_elec -
                                          args.frozen, byte_nums, byte_idx)
 
     results = io_utils.setup_results(args.result_int, args.result_dir,
-                                     args.rayleigh, False)
+                                     args.rayleigh, False, args.interval)
 
     if args.sampl_mode != "all":
         n_doub_ref = fci_utils.count_doubex(occ_orbs[0], symm, symm_lookup)
@@ -75,9 +76,18 @@ def main():
                 sol_vec.indices, occ_orbs, symm)
             sing_probs = numpy.ones_like(sing_idx, dtype=numpy.float64)
         elif args.sampl_mode == "multinomial":
-            n_col, = compress_utils.sys_resample(numpy.abs(sol_vec.values), args.H_sample, ret_counts=True)
-            n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
-                n_col, p_doub)
+            # n_col, = compress_utils.sys_resample(numpy.abs(sol_vec.values), args.H_sample, ret_counts=True)
+            # n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
+            #     n_col, p_doub)
+            n_col = numpy.ceil(args.H_sample * numpy.abs(sol_vec.values) / one_norm)
+            n_col = n_col.astype(numpy.uint32)
+
+            float_doub_j = p_doub * n_col
+            n_doub_col = numpy.floor(float_doub_j)
+            float_doub_j -= n_doub_col
+            n_doub_col += numpy.random.binomial(1, float_doub_j)
+            n_doub_col = n_doub_col.astype(numpy.uint32)
+            n_sing_col = n_col - n_doub_col
 
         if args.sampl_mode == "multinomial":
             # Sample single excitations
@@ -98,8 +108,8 @@ def main():
             doub_orbs, doub_probs, doub_idx = heat_bath.doub_multin(
                 occ1_probs, occ2_probs, exch_probs, sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
             doub_probs *= p_doub * n_col[doub_idx]
-        else:
-            raise RuntimeError("This sampling mode is not yet implemented for the specified distribution.")
+        elif args.dist == "heat-bath_PP" and args.sampl_mode == "fri":
+            doub_orbs, doub_probs, doub_idx, sing_orbs, sing_probs, sing_idx = heat_bath.fri_comp(sol_vec, args.H_sample, occ1_probs, occ2_probs, exch_probs, p_doub, occ_orbs, symm, symm_lookup)
 
         doub_matrel = fci_c_utils.doub_matr_el_nosgn(
             doub_orbs, eris, args.frozen)
@@ -145,10 +155,13 @@ def main():
         # Add vectors in sparse format
         next_vec.add(spawn_dets, spawn_vals)
         one_norm = next_vec.one_norm()
-        io_utils.calc_results(results, next_vec, 0, iterat, hf_col)
         # next_vec.values /= one_norm
-        en_shift -= 0.05 * numpy.log(one_norm / last_norm)
+        if (iterat + 1) % args.interval == 0:
+            en_shift -= args.damping / args.interval / args.epsilon * numpy.log(one_norm / last_norm)
+            io_utils.calc_ray_quo(results, sol_vec, next_vec, iterat, args.epsilon)
         last_norm = one_norm
+
+        io_utils.calc_results(results, next_vec, 0, iterat, hf_col)
 
         cmp_idx, cmp_vals = compress_utils.fri_1D(next_vec.values, args.sparsity)
         cmp_dets = next_vec.indices[cmp_idx]
@@ -182,7 +195,7 @@ def _parse_args():
     parser.add_argument('-s', '--initial_shift', type=float, default=0.,
                         help="Initial energy shift (S) for controlling normalization")
     parser.add_argument('-a', '--interval', type=int, default=10,
-                        help="Period with which to update the energy shift (A).")
+                        help="Period with which to update the energy shift (A) and calculate the quadratic Rayleigh quotient, if desired.")
     parser.add_argument('-d', '--damping', type=float, default=0.05,
                         help="Damping parameter for shift updates (xi)")
     parser.add_argument('-p', '--procs', type=int, default=8,
@@ -192,7 +205,7 @@ def _parse_args():
     parser.add_argument('-y', '--result_dir', type=str, default=".",
                         help="Directory in which to save output files")
     parser.add_argument('--rayleigh', action="store_true",
-                        help="Calculate Rayleigh quotient every 10 iterations")
+                        help="Calculate quadratic Rayleigh quotient every 10 iterations")
     parser.add_argument('-i', '--max_iter', type=int, default=800000,
                         help="Number of iterations to simulate in the trajectory.")
     parser.add_argument('-l', '--restart', type=str,

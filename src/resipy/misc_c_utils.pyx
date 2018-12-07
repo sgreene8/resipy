@@ -378,7 +378,7 @@ def linsearch_2D(double[:, :] search_lists, unsigned int[:] row_idx,
             curr_row = row_idx[search_idx]
             curr_col = 0
             col_pos = 0
-        while col_pos <= search_vals[search_idx]:
+        while col_pos < search_vals[search_idx]:
             col_pos += search_lists[curr_row, curr_col]
             curr_col += 1
         ret_idx[search_idx] = curr_col - 1

@@ -30,9 +30,9 @@ def main():
     # Initialize solution vector
     if args.restart:
         ini_idx = numpy.load(args.restart + 'vec_idx.npy')
-        vec_val = numpy.load(args.restart + 'vec_val.npy')
+        ini_val = numpy.load(args.restart + 'vec_val.npy').astype(numpy.int32)
         en_shift = numpy.genfromtxt(args.restart + 'S.txt')[-1]
-        last_nwalk = numpy.abs(vec_val).sum()
+        last_nwalk = numpy.abs(ini_val).sum()
     else:
         ini_idx = numpy.array([hf_det], dtype=numpy.int64)
         ini_val = numpy.array([args.walkers], dtype=numpy.int32)
@@ -118,7 +118,7 @@ def main():
             occ_orbs, h_core, eris, args.frozen) - en_shift - hf_en
         diag_matrel = 1 - args.epsilon * diag_matrel
         diag_matrel *= numpy.sign(sol_vec.values)
-        diag_matrel = compress_utils.round_binomially(diag_matrel, n_col, rngen_ptrs)
+        diag_matrel = compress_utils.round_binomially(diag_matrel, n_col)
         # Retain nonzero elements
         diag_nonz = diag_matrel != 0
         next_vec = sparse_vector.SparseVector(
@@ -129,9 +129,10 @@ def main():
         occ_orbs = fci_c_utils.gen_orb_lists(next_vec.indices, 2 * n_orb, args.n_elec -
                                              args.frozen, byte_nums, byte_idx)
         n_walk = next_vec.one_norm()
-        if iterat % args.interval == 0:
+        if (iterat + 1) % args.interval == 0:
             en_shift, last_nwalk = _adjust_shift(
                 en_shift, n_walk, last_nwalk, args.walker_target, args.damping / args.interval / args.epsilon)
+            io_utils.calc_ray_quo(results, sol_vec, next_vec, iterat, args.epsilon)
 
         io_utils.calc_results(results, next_vec, en_shift, iterat, hf_col)
         sol_vec = next_vec
@@ -170,7 +171,7 @@ def _parse_args():
     parser.add_argument('-s', '--initial_shift', type=float, default=0.,
                         help="Initial energy shift (S) for controlling normalization")
     parser.add_argument('-a', '--interval', type=int, default=10,
-                        help="Period with which to update the energy shift (A).")
+                        help="Period with which to update the energy shift (A) and calculate the quadratic Rayleigh quotient, if desired.")
     parser.add_argument('-d', '--damping', type=float, default=0.05,
                         help="Damping parameter for shift updates (xi)")
     parser.add_argument('-p', '--procs', type=int, default=8,
@@ -182,7 +183,7 @@ def _parse_args():
     parser.add_argument('-y', '--result_dir', type=str, default=".",
                         help="Directory in which to save output files")
     parser.add_argument('--rayleigh', action="store_true",
-                        help="Calculate Rayleigh quotient every A iterations")
+                        help="Calculate quadratic Rayleigh quotient every A iterations")
     parser.add_argument('-i', '--max_iter', type=int, default=800000,
                         help="Number of iterations to simulate in the trajectory.")
     parser.add_argument('-l', '--restart', type=str,

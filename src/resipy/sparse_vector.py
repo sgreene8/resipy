@@ -57,8 +57,9 @@ class SparseVector(object):
                 dot product
         """
 
-        vals = self.values.astype(numpy.float64)
-        return misc_c_utils.dot_sorted(self.indices, vals, vec.indices, vec.values)
+        self_vals = self.values.astype(numpy.float64)
+        vec_vals = vec.values.astype(numpy.float64)
+        return misc_c_utils.dot_sorted(self.indices, self_vals, vec.indices, vec_vals)
 
     def one_norm(self):
         """

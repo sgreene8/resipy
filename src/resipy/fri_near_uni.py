@@ -50,6 +50,7 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
         index of the origin determinant of each chosen single excitation
          in the dets array
     """
+    seq_idx = numpy.arange(n_sample, dtype=numpy.int32)
     symm_virt = near_uniform.virt_symm(occ_orb, orb_symm, symm_lookup)
     occ_allow, virt_allow = near_uniform.sing_allow(symm_virt, occ_orb,
                                                     orb_symm)
@@ -77,14 +78,12 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
     counts = numpy.append(counts, n_occ_pair * numpy.ones(n_doub, numpy.uint32))
 
     fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, counts, numpy.empty([0, 0]), n_sample)
-    n_fried = fri_idx.shape[0]
     sampl_idx = fri_idx[:, 0]
     # Group nonzero elements in FRI vector by single/double excitations
     sing_idx = sampl_idx < n_sing
     doub_idx = numpy.logical_not(sing_idx)
     new_det_idx = det_idx[sampl_idx[sing_idx]]
     n_sing = new_det_idx.shape[0]
-    n_doub = n_fried - n_sing
     occ_idx = occ_allow[new_det_idx, fri_idx[sing_idx, 1] + 1]
     new_det_idx = numpy.append(new_det_idx, det_idx[sampl_idx[doub_idx]])
     det_idx = new_det_idx
@@ -97,29 +96,28 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
 
     fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, virt_allow[det_idx[:n_sing], occ_idx[:n_sing]],
                                                 doub_wts, n_sample)
-    n_fried = fri_idx.shape[0]
-    sampl_idx = fri_idx[:, 0]
-    # Group nonzero elements in FRI vector by single/double excitations
-    sing_idx = sampl_idx < n_sing
-    doub_idx = numpy.logical_not(sing_idx)
-    new_det_idx = det_idx[sampl_idx[sing_idx]]
-    doub_idx_shift = n_sing
-    n_sing = new_det_idx.shape[0]
-    n_doub = n_fried - n_sing
-    new_det_idx = numpy.append(new_det_idx, det_idx[sampl_idx[doub_idx]])
-    det_idx = new_det_idx
-    occ_idx = numpy.append(occ_idx[sampl_idx[sing_idx]], occ_idx[sampl_idx[doub_idx]])
-    virt_idx = numpy.append(fri_idx[sing_idx, 1], fri_idx[doub_idx, 1])
-    fri_vals = numpy.append(fri_vals[sing_idx], fri_vals[doub_idx])
-    doub_occ = doub_occ[sampl_idx[doub_idx] - doub_idx_shift]
-    doub_wts = doub_wts[sampl_idx[doub_idx] - doub_idx_shift, virt_idx[n_sing:]]
-    doub_nvirt = doub_nvirt[sampl_idx[doub_idx] - doub_idx_shift, virt_idx[n_sing:]]
+    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(fri_idx[:, 0], n_sing, [det_idx, occ_idx], [], [doub_occ, doub_wts, doub_nvirt])
+    det_idx, occ_idx = all_arrs
+    doub_occ, doub_wts, doub_nvirt = doub_arrs
+    n_doub = doub_occ.shape[0]
+    # sampl_idx = fri_idx[:, 0]
+
+    # doub_idx_shift = n_sing
+    # sampl_idx isn't necessarily sorted, but that's ok because single excitation elements come first
+    # n_sing = numpy.searchsorted(sampl_idx, n_sing)
+    # det_idx = det_idx[sampl_idx]
+    # occ_idx = occ_idx[sampl_idx]
+    virt_idx = fri_idx[:, 1]
+    # doub_occ = doub_occ[sampl_idx[n_sing:] - doub_idx_shift]
+    # doub_wts = doub_wts[sampl_idx[n_sing:] - doub_idx_shift, virt_idx[n_sing:]]
+    doub_wts = doub_wts[seq_idx[:n_doub], virt_idx[n_sing:]]
+    # doub_nvirt = doub_nvirt[sampl_idx[n_sing:] - doub_idx_shift, virt_idx[n_sing:]]
+    doub_nvirt = doub_nvirt[seq_idx[:n_doub], virt_idx[n_sing:]]
 
     orb_counts = numpy.append(numpy.ones(n_sing), doub_nvirt)
     weights = numpy.empty((0, 2))
     # Fourth layer of compression: virtual orbital pair for doubles
     fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, orb_counts, weights, n_sample)
-    n_fried = fri_idx.shape[0]
     sampl_idx = fri_idx[:, 0]
     # Group nonzero elements in FRI vector by single/double excitations
     sing_idx = sampl_idx < n_sing
@@ -136,8 +134,8 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
     n_orb = orb_symm.shape[0]
     virt_choices = near_uniform.virt_symm_idx(sol_vec.indices[sing_det_idx], symm_lookup,
                                               orb_symm[sing_occ % n_orb], (sing_occ / n_orb) * n_orb)
-    tmp_idx = numpy.arange(n_sing, dtype=numpy.uint32)
-    sing_orb[:, 1] = virt_choices[tmp_idx, virt_idx[sampl_idx[sing_idx]]]
+    # tmp_idx = numpy.arange(n_sing, dtype=numpy.uint32)
+    sing_orb[:, 1] = virt_choices[seq_idx[:n_sing], virt_idx[sampl_idx[sing_idx]]]
     sing_probs = ((1 - p_doub) / occ_allow[sing_det_idx, 0] / virt_allow[sing_det_idx, sing_orb_idx]
                   * sol_vec.values[sing_det_idx] / fri_vals[sing_idx])
 

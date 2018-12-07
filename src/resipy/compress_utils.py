@@ -42,6 +42,7 @@ def fri_subd(vec, num_div, sub_weights, n_samp):
     """
     new_idx = numpy.zeros([n_samp, 2], dtype=numpy.uint32)
     new_vals = numpy.zeros(n_samp)
+
     weights = numpy.abs(vec)
     sub_cp = numpy.copy(sub_weights)
 
@@ -169,11 +170,18 @@ def sys_resample(vec, nsample, ret_idx=False, ret_counts=False):
         the weights for each index
     nsample : (unsigned int)
         the number of samples to draw
+    ret_idx : (bool, optional)
+        If True, return a vector containing the indices (possibly repeated) of
+        chosen indices
+    ret_counts : (bool, optional)
+        If True, return a 1-D vector of the same shape as vec with the number of
+        chosen samples at each position
 
     Returns
     -------
-    (numpy.ndarray, unsigned int)
-        indices of chosen elements (duplicates are possible)
+    (tuple)
+        Contains 0, 1, or 2 numpy vectors depending on the values of input parameters
+        ret_idx and ret_counts
     """
 
     if nsample == 0:
@@ -203,6 +211,7 @@ def sys_subd(weights, counts, sub_weights, nsample):
         counts.shape[0] + sub_weights.shape[0]
     counts : (numpy.ndarray, unsigned int)
         the first counts.shape[0] elements of weights are subdivided into
+        equal subintervals
     sub_weights : (numpy.ndarray, float)
         sub_weights[i] corresponds to the subdivisions of weights[i].
         Must be row-normalized
@@ -233,10 +242,10 @@ def sys_subd(weights, counts, sub_weights, nsample):
     ret_idx[:, 0] = weight_idx
     rand_points[weight_idx > 0] -= big_intervals[weight_idx[weight_idx > 0] - 1]
     rand_points *= one_norm / weights[weight_idx]
+    rand_points[rand_points >= 1.] = 0.999999
 
     n_uni_wts = counts.shape[0]
-    uni_points = weight_idx < n_uni_wts
-    num_uni = numpy.sum(uni_points)
+    num_uni = numpy.searchsorted(weight_idx, n_uni_wts)
     ret_idx[:num_uni, 1] = rand_points[:num_uni] * counts[weight_idx[:num_uni]]
 
     subweight_idx = misc_c_utils.linsearch_2D(sub_weights, weight_idx[num_uni:] - n_uni_wts,
@@ -322,3 +331,45 @@ def sample_alias(alias, Q, row_idx, mt_ptrs):
     choices[alias_idx] = alias[row_idx[alias_idx], r_ints[alias_idx]]
     choices = choices.astype(numpy.uint8)
     return choices
+
+
+def proc_fri_sd_choices(sampl_idx, n_sing, all_arrs, sing_arrs, doub_arrs):
+    """Given the results from an FRI compression in which the weights for single excitations
+    are uniformly subdivided and those for double excitations are subdivided nonuniformly,
+    rearrange arrays of observables such that they are indexed by the sample index from the compression,
+    instead of the index in the uncompressed array.
+    Parameters
+    ----------
+    sampl_idx : (numpy.ndarray, unsigned int)
+        Array of chosen top-level indices from the FRI compression
+    n_sing : (unsigned int)
+        Number of single excitation elements in the uncompressed array
+    all_arrs : (python list of numpy.ndarrays)
+        Each array contains numbers corresponding to each element in the original uncompressed array
+    sing_arrs : (python list of numpy.ndarrays)
+        Each array contains numbers corresponding only to single excitation elements in the orinal
+        uncompressed array
+    doub_arrs : (python list of numpy.ndarrays)
+        Each array contains numbers corresponding only to double excitation elements in the orinal
+        uncompressed array
+    Returns
+    -------
+    (python list of numpy.ndarrays), (python list of numpy.ndarrays), (python list of numpy.ndarrays)
+        Each array contains numbers corresponding to the same parameters as in the inputted arrays,
+        except they are now indexed according to the sampled indices in the compressed array.
+    (unsigned int)
+        Number of single excitation elements in the compressed array    
+    """
+    # sampl_idx isn't necessarily sorted, but that's ok because single excitation elements come first
+    new_n_sing = numpy.searchsorted(sampl_idx, n_sing)
+    new_all = []
+    for arr in all_arrs:
+        new_all.append(arr[sampl_idx])
+    new_sing = []
+    for arr in sing_arrs:
+        new_sing.append(arr[sampl_idx[:new_n_sing]])
+    doub_idx = sampl_idx[new_n_sing:] - n_sing
+    new_doub = []
+    for arr in doub_arrs:
+        new_doub.append(arr[doub_idx])
+    return new_all, new_sing, new_doub, new_n_sing
