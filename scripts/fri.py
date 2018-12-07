@@ -76,29 +76,20 @@ def main():
                 sol_vec.indices, occ_orbs, symm)
             sing_probs = numpy.ones_like(sing_idx, dtype=numpy.float64)
         elif args.sampl_mode == "multinomial":
-            # n_col, = compress_utils.sys_resample(numpy.abs(sol_vec.values), args.H_sample, ret_counts=True)
-            # n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
-            #     n_col, p_doub)
-            n_col = numpy.ceil(args.H_sample * numpy.abs(sol_vec.values) / one_norm)
-            n_col = n_col.astype(numpy.uint32)
-
-            float_doub_j = p_doub * n_col
-            n_doub_col = numpy.floor(float_doub_j)
-            float_doub_j -= n_doub_col
-            n_doub_col += numpy.random.binomial(1, float_doub_j)
-            n_doub_col = n_doub_col.astype(numpy.uint32)
-            n_sing_col = n_col - n_doub_col
+            n_col, = compress_utils.sys_resample(numpy.abs(sol_vec.values), args.H_sample, ret_counts=True)
+            n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
+                n_col, p_doub)
 
         if args.sampl_mode == "multinomial":
             # Sample single excitations
             sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(
                 sol_vec.indices, occ_orbs, symm, symm_lookup, n_sing_col, rngen_ptrs)
-            sing_probs *= (1 - p_doub) * n_col[sing_idx]
+            sing_probs *= n_sing_col[sing_idx]
         if args.dist == "near_uniform" and args.sampl_mode == "multinomial":
             # Sample double excitations
             doub_orbs, doub_probs, doub_idx = near_uniform.doub_multin(
                 sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
-            doub_probs *= p_doub * n_col[doub_idx]
+            doub_probs *= n_doub_col[doub_idx]
         elif args.dist == "near_uniform" and args.sampl_mode == "fri":
             # Compress both excitations
             doub_orbs, doub_probs, doub_idx, sing_orbs, sing_probs, sing_idx = fri_near_uni.cmp_hier(sol_vec, args.H_sample, p_doub,
@@ -107,7 +98,7 @@ def main():
             # Sample double excitations
             doub_orbs, doub_probs, doub_idx = heat_bath.doub_multin(
                 occ1_probs, occ2_probs, exch_probs, sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
-            doub_probs *= p_doub * n_col[doub_idx]
+            doub_probs *= n_doub_col[doub_idx]
         elif args.dist == "heat-bath_PP" and args.sampl_mode == "fri":
             doub_orbs, doub_probs, doub_idx, sing_orbs, sing_probs, sing_idx = heat_bath.fri_comp(sol_vec, args.H_sample, occ1_probs, occ2_probs, exch_probs, p_doub, occ_orbs, symm, symm_lookup)
 
