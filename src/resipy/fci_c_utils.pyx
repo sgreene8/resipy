@@ -6,12 +6,15 @@ information.
 """
 
 import numpy
+from libc.stdio cimport printf
+from libc.math cimport fabs
+from cython.parallel import prange, threadid
 cimport numpy
-from cython.parallel import prange
+cimport openmp
 
 
-def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec,
-                  unsigned char[:] lookup_nums, unsigned char[:, :] lookup_idx):
+def gen_orb_lists(long long[:] dets, unsigned int num_elec, unsigned char[:] lookup_nums,
+                  unsigned char[:, :] lookup_idx):
     """Generate arrays of indices of occupied orbitals from bit string
     representations of Slater determinants, following procedure in Sec. 3.1 of
     Booth et al. (2014).
@@ -21,8 +24,6 @@ def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec
     dets : (numpy.ndarray, int64)
         array of bit strings to parse. all must have the same number of occupied
         orbitals,and the same number unoccupied
-    num_orb : (unsigned int)
-        number of spin orbitals in the basis
     num_elec : (unsigned int)
         number of electrons in the system
     lookup_nums : (numpy.ndarray, uint8)
@@ -42,16 +43,13 @@ def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec
     cdef unsigned int byte_idx, elec_idx
     cdef size_t det_idx
     cdef long long curr_det, mask = 255
-    cdef unsigned int num_bytes = num_orb / 8
     cdef unsigned char n_elec, det_byte, bit_idx
-
-    if num_orb % 8 > 0:
-        num_bytes += 1
 
     for det_idx in prange(n_dets, nogil=True, schedule=static):
         curr_det = dets[det_idx]
         elec_idx = 0
-        for byte_idx in range(num_bytes):
+        byte_idx = 0
+        while curr_det != 0:
             det_byte = curr_det & mask
             n_elec = lookup_nums[det_byte]
             for bit_idx in range(n_elec):
@@ -60,6 +58,7 @@ def gen_orb_lists(long long[:] dets, unsigned int num_orb, unsigned int num_elec
                                                                     bit_idx])
             elec_idx = elec_idx + n_elec
             curr_det = curr_det >> 8
+            byte_idx = byte_idx + 1
 
     return occ_orbs
 
@@ -94,20 +93,26 @@ def doub_matr_el_nosgn(unsigned char[:, :] chosen_idx, double[:, :, :, :] eris,
     cdef double mat_el
 
     for samp_idx in prange(n_samp, nogil=True, schedule=static):
-        sp0 = chosen_idx[samp_idx, 0]
-        sp1 = chosen_idx[samp_idx, 1]
-        same_sp = sp0 / adj_n_orb == sp1 / adj_n_orb
-        sp0 = (sp0 % adj_n_orb) + n_frozen / 2
-        sp1 = (sp1 % adj_n_orb) + n_frozen / 2
-        sp2 = (chosen_idx[samp_idx, 2] % adj_n_orb) + n_frozen / 2
-        sp3 = (chosen_idx[samp_idx, 3] % adj_n_orb) + n_frozen / 2
-
-        mat_el = eris[sp0, sp1, sp2, sp3]
-        if same_sp:
-            mat_el = mat_el - eris[sp0, sp1, sp3, sp2]
-        matrix_el[samp_idx] = mat_el
+        matrix_el[samp_idx] = _doub_mel(&chosen_idx[samp_idx, 0], eris, n_frozen)
 
     return matrix_el
+
+
+cdef double _doub_mel(unsigned char *orbs, double[:, :, :, :] eris, unsigned int n_frozen) nogil:
+    cdef unsigned char sp0, sp1, sp2, sp3
+    cdef unsigned int adj_n_orb = eris.shape[0] - n_frozen / 2
+    sp0 = orbs[0]
+    sp1 = orbs[1]
+    cdef int same_sp = sp0 / adj_n_orb == sp1 / adj_n_orb
+    sp0 = (sp0 % adj_n_orb) + n_frozen / 2
+    sp1 = (sp1 % adj_n_orb) + n_frozen / 2
+    sp2 = (orbs[2] % adj_n_orb) + n_frozen / 2
+    sp3 = (orbs[3] % adj_n_orb) + n_frozen / 2
+
+    cdef double mat_el = eris[sp0, sp1, sp2, sp3]
+    if same_sp:
+        mat_el -= eris[sp0, sp1, sp3, sp2]
+    return mat_el
 
 
 def single_dets_matrel_nosgn(numpy.ndarray[numpy.int64_t] dets,
@@ -145,36 +150,126 @@ def single_dets_matrel_nosgn(numpy.ndarray[numpy.int64_t] dets,
     cdef unsigned int half_frz = n_frozen / 2
 
     for i in prange(n_dets, nogil=True, schedule=static):
-        # spatial index of occupied & unoccupied orbitals
-        occ_spa = (ex_orbs[i, 0] % (n_orb - half_frz)) + half_frz
-        unocc_spa = (ex_orbs[i, 1] % (n_orb - half_frz)) + half_frz
-        occ_spin = ex_orbs[i, 0] / (n_orb - half_frz)
-        matr_sum = hcore[occ_spa, unocc_spa]
-        for j in range(half_frz):
-            # double-count coulomb term
-            matr_sum = matr_sum + eris[occ_spa, j, unocc_spa, j] * 2
-            # single-count exchange term
-            matr_sum = matr_sum - eris[occ_spa, j, j, unocc_spa]
-        for j in range(n_elec / 2):
-            matr_sum = matr_sum + eris[occ_spa, occ_orbs[i, j] + half_frz,
-                                       unocc_spa, occ_orbs[i, j] + half_frz]
-            if occ_spin == 0:
-                matr_sum = matr_sum - eris[occ_spa, occ_orbs[i, j] + half_frz,
-                                           occ_orbs[i, j] + half_frz, unocc_spa]
-        for j in range(n_elec / 2, n_elec):
-            matr_sum = matr_sum + eris[occ_spa, occ_orbs[i, j] - n_orb +
-                                       n_frozen, unocc_spa, occ_orbs[i, j] -
-                                       n_orb + n_frozen]
-            if occ_spin == 1:
-                matr_sum = matr_sum - eris[occ_spa, occ_orbs[i, j] - n_orb +
-                                           n_frozen, occ_orbs[i, j] - n_orb +
-                                           n_frozen, unocc_spa]
-        matrix_el[i] = matr_sum
+        matrix_el[i] = _sing_mel(ex_orbs[i, 0], ex_orbs[i, 1], &occ_orbs[i, 0], half_frz, eris, hcore, n_elec)
 
     one = numpy.ones(1, dtype=numpy.int64)
     excited_dets = dets ^ (one << ex_orbs[:, 0])
     excited_dets ^= one << ex_orbs[:, 1]
     return excited_dets, matrix_el
+
+
+cdef double _sing_mel(unsigned char occ, unsigned char unocc, unsigned char *occ_orbs,
+                      unsigned int half_frz, double[:, :, :, :] eris, double[:, :] hcore,
+                      unsigned int n_elec) nogil:
+    # Calculate one single-excitation matrix element
+    cdef unsigned int num_orb = eris.shape[0]
+    # cdef unsigned int n_elec = occ_orbs.shape[0]
+    cdef unsigned char occ_spa = (occ % (num_orb - half_frz)) + half_frz
+    cdef unsigned char unocc_spa = (unocc % (num_orb - half_frz)) + half_frz
+    cdef unsigned int occ_spin = occ / (num_orb - half_frz)
+    cdef double mat_el = hcore[occ_spa, unocc_spa]
+    cdef unsigned int j
+
+    for j in range(half_frz):
+        # double-count coulomb term
+        mat_el += eris[occ_spa, j, unocc_spa, j] * 2
+        # single-count exchange term
+        mat_el -= eris[occ_spa, j, j, unocc_spa]
+    for j in range(n_elec / 2):
+        mat_el += eris[occ_spa, occ_orbs[j] + half_frz,
+                       unocc_spa, occ_orbs[j] + half_frz]
+        if occ_spin == 0:
+            mat_el -= eris[occ_spa, occ_orbs[j] + half_frz,
+                           occ_orbs[j] + half_frz, unocc_spa]
+    for j in range(n_elec / 2, n_elec):
+        mat_el += eris[occ_spa, occ_orbs[j] - num_orb + half_frz * 2,
+                       unocc_spa, occ_orbs[j] - num_orb + half_frz * 2]
+        if occ_spin == 1:
+            mat_el -= eris[occ_spa, occ_orbs[j] - num_orb + half_frz * 2,
+                           occ_orbs[j] - num_orb + half_frz * 2, unocc_spa]
+    return mat_el
+
+
+def ray_off_diag(long long[:] dets, double[:] values, unsigned char[:, :] occ_orbs,
+                 double[:, :] hcore, double[:, :, :, :] eris, unsigned int n_frozen,
+                 unsigned char[:] orb_symm):
+    cdef size_t n_dets = dets.shape[0]
+    cdef size_t row_det_idx, col_det_idx
+    cdef unsigned int n_threads = openmp.omp_get_max_threads()
+    cdef unsigned int thread_idx
+
+    cdef unsigned int num_elec = occ_orbs.shape[1]
+    cdef unsigned int num_orb = orb_symm.shape[0]
+    cdef unsigned int num_sing_ex = num_elec * (num_orb - num_elec / 2)
+    cdef numpy.ndarray[numpy.uint8_t, ndim=3] sing_ex = numpy.zeros([n_threads, num_sing_ex, 2], dtype=numpy.uint8)
+    cdef size_t n_sing, n_doub, ex_idx
+
+    cdef unsigned int n_unocc = num_orb - num_elec / 2
+    cdef unsigned int n_same = num_elec * (num_elec / 2 - 1) / 2 * n_unocc * (n_unocc - 1) / 2
+    cdef unsigned int n_diff = num_elec / 2 * num_elec / 2 * n_unocc ** 2
+    cdef numpy.ndarray[numpy.uint8_t, ndim=3] doub_ex = numpy.zeros([n_threads, n_same + n_diff, 4], dtype=numpy.uint8)
+
+    cdef long long curr_det, search_det
+    cdef unsigned int n_perm
+    cdef int search_idx, excite_sign
+    cdef double matr_el, ray_num = 0
+
+    for row_det_idx in prange(n_dets - 1, nogil=True, schedule=dynamic):
+        thread_idx = threadid()
+        curr_det = dets[row_det_idx]
+        _sing_ex_symm(curr_det, &occ_orbs[row_det_idx, 0], num_elec, &sing_ex[thread_idx, 0, 0],
+                      orb_symm, &n_sing)
+        _doub_ex_symm(curr_det, &occ_orbs[row_det_idx, 0], num_elec, &doub_ex[thread_idx, 0, 0],
+                      orb_symm, &n_doub)
+        for ex_idx in range(n_sing):
+            search_det = curr_det ^ (< long long > 1 << sing_ex[thread_idx, ex_idx, 0])
+            search_det = search_det ^ (< long long > 1 << sing_ex[thread_idx, ex_idx, 1])
+            search_idx = binary_search(&dets[row_det_idx + 1], n_dets - row_det_idx - 1, search_det)
+            if search_idx != -1:
+                matr_el = _sing_mel(sing_ex[thread_idx, ex_idx, 0], sing_ex[thread_idx, ex_idx, 1],
+                                    &occ_orbs[row_det_idx, 0], n_frozen / 2, eris, hcore, num_elec)
+                n_perm = bits_between(curr_det, sing_ex[thread_idx, ex_idx, 0], sing_ex[thread_idx, ex_idx, 1])
+                if n_perm % 2 == 0:
+                    excite_sign = 1
+                else:
+                    excite_sign = -1
+                ray_num += values[row_det_idx] * matr_el * values[search_idx + row_det_idx + 1] * 2 * excite_sign
+        for ex_idx in range(n_doub):
+            search_det = curr_det ^ (< long long > 1 << doub_ex[thread_idx, ex_idx, 0])
+            search_det = search_det ^ (< long long > 1 << doub_ex[thread_idx, ex_idx, 1])
+            search_det = search_det ^ (< long long > 1 << doub_ex[thread_idx, ex_idx, 2])
+            search_det = search_det ^ (< long long > 1 << doub_ex[thread_idx, ex_idx, 3])
+            search_idx = binary_search(&dets[row_det_idx + 1], n_dets - row_det_idx - 1, search_det)
+            if search_idx != -1:
+                search_det = search_det ^ (< long long > 1 << doub_ex[thread_idx, ex_idx, 3])
+                search_det = search_det ^ (< long long > 1 << doub_ex[thread_idx, ex_idx, 2])
+                n_perm = bits_between(search_det, doub_ex[thread_idx, ex_idx, 0], doub_ex[thread_idx, ex_idx, 2])
+                n_perm = n_perm + bits_between(search_det, doub_ex[thread_idx, ex_idx, 1], doub_ex[thread_idx, ex_idx, 3])
+                matr_el = _doub_mel(&doub_ex[thread_idx, ex_idx, 0], eris, n_frozen)
+                if n_perm % 2 == 0:
+                    excite_sign = 1
+                else:
+                    excite_sign = -1
+                ray_num += matr_el * values[row_det_idx] * values[search_idx + row_det_idx + 1] * 2 * excite_sign
+    return ray_num
+
+
+cdef int binary_search(long long *arr, size_t arr_len, long long target) nogil:
+    # searches arr for target, returns -1 if not found
+    cdef size_t left = 0
+    cdef size_t right = arr_len - 1
+    cdef int middle
+    if arr[0] > target or arr[right] < target:
+        return -1
+    while left <= right:
+        middle = (left + right) / 2
+        if arr[middle] < target:
+            left = middle + 1
+        elif arr[middle] > target:
+            right = middle - 1
+        else:
+            return middle
+    return -1
 
 
 def diag_matrel(unsigned char[:, :] occ_orbs, double[:, :] hcore,
@@ -264,28 +359,15 @@ def excite_signs(unsigned char[:] cre_ops, unsigned char[:] des_ops, long long[:
             signs of excitations, +1 or -1
     """
     cdef size_t n_dets = dets.shape[0]
-    cdef unsigned char[16] byte_counts = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4]
+    # cdef unsigned char[16] byte_counts = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4]
     cdef size_t det_idx
-    cdef unsigned char credes_max, credes_min
-    cdef long long curr_det, mask
+    # cdef unsigned char credes_max, credes_min
+    # cdef long long curr_det, mask
     cdef numpy.ndarray[numpy.int8_t] signs = numpy.zeros(n_dets, dtype=numpy.int8)
     cdef int n_perm
 
     for det_idx in range(n_dets):
-        if cre_ops[det_idx] < des_ops[det_idx]:
-            credes_min = cre_ops[det_idx]
-            credes_max = des_ops[det_idx]
-        else:
-            credes_max = cre_ops[det_idx]
-            credes_min = des_ops[det_idx]
-
-        n_perm = 0
-        mask = (< long long > 1 << credes_max) - (< long long > 1 << (credes_min + 1))
-        curr_det = (dets[det_idx] & mask) >> (credes_min + 1)
-
-        while curr_det > 0:
-            n_perm += byte_counts[curr_det & 15]
-            curr_det = curr_det >> 4
+        n_perm = bits_between(dets[det_idx], cre_ops[det_idx], des_ops[det_idx])
         if n_perm % 2 == 0:
             signs[det_idx] = 1
         else:
@@ -293,7 +375,30 @@ def excite_signs(unsigned char[:] cre_ops, unsigned char[:] des_ops, long long[:
     return signs
 
 
-def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[numpy.uint8_t] orb_symm):
+cdef unsigned int bits_between(long long bit_str, unsigned char a, unsigned char b) nogil:
+    # count number of 1's between bits a and b in binary representation of bit_str
+    cdef unsigned int n_bits = 0
+    cdef unsigned char *byte_counts = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4]
+    cdef unsigned char min_bit, max_bit
+
+    if a < b:
+        min_bit = a
+        max_bit = b
+    else:
+        max_bit = a
+        min_bit = b
+
+    cdef long long mask = (< long long > 1 << max_bit) - (< long long > 1 << (min_bit + 1))
+    cdef long long curr_int = (bit_str & mask) >> (min_bit + 1)
+
+    while curr_int != 0:
+        n_bits += byte_counts[curr_int & 15]
+        curr_int >>= 4
+
+    return n_bits
+
+
+def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, unsigned char[:] orb_symm):
     """Generate all spin-alllowed single excitations from an array of Slater determinants.
 
     Parameters
@@ -322,19 +427,17 @@ def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[n
 
     cdef numpy.ndarray[numpy.uint8_t, ndim=2] chosen_orbs = numpy.zeros([tot_sampl, 2],
                                                                         dtype=numpy.uint8)
+    cdef numpy.ndarray[numpy.uint32_t] idx_arr = numpy.zeros(tot_sampl, dtype=numpy.uint32)
+    cdef size_t num_ex, j, start_idx = 0
+
     for det_idx in range(num_dets):
-        _sing_ex(dets[det_idx], occ_orbs[det_idx], &chosen_orbs[det_idx * num_sing_ex, 0],
-                 num_orb)
+        _sing_ex_symm(dets[det_idx], &occ_orbs[det_idx, 0], num_elec, &chosen_orbs[start_idx, 0],
+                      orb_symm, &num_ex)
+        for j in range(num_ex):
+            idx_arr[start_idx + j] = det_idx
+        start_idx += num_ex
 
-    idx_arr = numpy.arange(num_dets, dtype=numpy.uint32)
-    idx_arr.shape = (-1, 1)
-    idx_arr = numpy.tile(idx_arr, (1, num_sing_ex))
-    idx_arr.shape = (-1)
-
-    successes = (orb_symm[chosen_orbs[:, 0] % num_orb] ==
-                 orb_symm[chosen_orbs[:, 1] % num_orb])
-
-    return chosen_orbs[successes], idx_arr[successes]
+    return chosen_orbs[:start_idx], idx_arr[:start_idx]
 
 
 cdef void _sing_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_arr,
@@ -361,55 +464,33 @@ cdef void _sing_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
                 idx += 2
 
 
-def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, numpy.ndarray[numpy.uint8_t] orb_symm):
-    """Generate all spin-alllowed double excitations from an array of Slater determinants.
-
-    Parameters
-    ----------
-    dets : (numpy.ndarray, int64)
-        Bit-string representations of Slater determinants
-    occ_orbs : (numpy.ndarray, uint8)
-        Orbitals occupied in each determinant
-    orb_symm : (numpy.ndarray, uint8)
-        Irreducible representations of the spatial orbitals in the basis
-
-    Returns
-    -------
-    (numpy.ndarray, uint8) :
-        Occupied (0th and 1st columns) and unoccupied (2nd and 3rd columns) orbitals for each excitation
-    (numpy.ndarray, uint32) :
-        Index of the origin determinant of each excitation in the dets array
+cdef void _sing_ex_symm(long long det, unsigned char *occ_orbs, unsigned int num_elec,
+                        unsigned char *res_arr, unsigned char[:] symm, size_t *n_ex) nogil:
     """
-
-    cdef size_t det_idx
-    cdef unsigned long num_dets = occ_orbs.shape[0]
-    cdef unsigned int num_elec = occ_orbs.shape[1]
-    cdef unsigned int num_orb = orb_symm.shape[0]
-    cdef unsigned int n_unocc = num_orb - num_elec / 2
-    cdef unsigned int n_same = num_elec * (num_elec / 2 - 1) / 2 * n_unocc * (n_unocc - 1) / 2
-    cdef unsigned int n_diff = num_elec / 2 * num_elec / 2 * n_unocc ** 2
-    cdef unsigned int tot_sampl = num_dets * (n_same + n_diff)
-
-    cdef numpy.ndarray[numpy.uint8_t, ndim=2] chosen_orbs = numpy.zeros([tot_sampl, 4],
-                                                                        dtype=numpy.uint8)
-    for det_idx in range(num_dets):
-        _doub_ex(dets[det_idx], occ_orbs[det_idx], &chosen_orbs[det_idx * (n_same +
-                                                                n_diff), 0], num_orb)
-
-    idx_arr = numpy.arange(num_dets, dtype=numpy.uint32)
-    idx_arr.shape = (-1, 1)
-    idx_arr = numpy.tile(idx_arr, (1, n_same + n_diff))
-    idx_arr.shape = (-1)
-
-    successes = (orb_symm[chosen_orbs[:, 0] % num_orb] ^
-                 orb_symm[chosen_orbs[:, 1] % num_orb] ^
-                 orb_symm[chosen_orbs[:, 2] % num_orb] ^
-                 orb_symm[chosen_orbs[:, 3] % num_orb]) == 0
-    return chosen_orbs[successes], idx_arr[successes]
+    Generate all spin- and symmetry-allowed single excitations from a Slater determinant.
+    """
+    cdef unsigned char i, i_orb, j
+    cdef unsigned int idx = 0
+    cdef unsigned int num_orb = symm.shape[0]
+    for i in range(num_elec / 2):
+        i_orb = occ_orbs[i]
+        for j in range(num_orb):
+            if not(det & < long long > 1 << j) and (symm[i_orb] ^ symm[j]) == 0:
+                res_arr[idx] = i_orb
+                res_arr[idx + 1] = j
+                idx += 2
+    for i in range(num_elec / 2, num_elec):
+        i_orb = occ_orbs[i]
+        for j in range(num_orb, 2 * num_orb):
+            if not(det & < long long > 1 << j) and (symm[i_orb - num_orb] ^ symm[j - num_orb]) == 0:
+                res_arr[idx] = i_orb
+                res_arr[idx + 1] = j
+                idx += 2
+    n_ex[0] = idx / 2
 
 
 cdef void _doub_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_arr,
-                   unsigned int num_orb):
+                   unsigned int num_orb) nogil:
     """
     Generate all spin-allowed double excitations from a Slater determinant.
     """
@@ -458,3 +539,103 @@ cdef void _doub_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
                             res_arr[idx + 2] = k
                             res_arr[idx + 3] = l
                             idx += 4
+
+
+def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, unsigned char[:] orb_symm):
+    """Generate all spin- and symmetry-alllowed double excitations from an array of Slater determinants.
+
+    Parameters
+    ----------
+    dets : (numpy.ndarray, int64)
+        Bit-string representations of Slater determinants
+    occ_orbs : (numpy.ndarray, uint8)
+        Orbitals occupied in each determinant
+    orb_symm : (numpy.ndarray, uint8)
+        Irreducible representations of the spatial orbitals in the basis
+
+    Returns
+    -------
+    (numpy.ndarray, uint8) :
+        Occupied (0th and 1st columns) and unoccupied (2nd and 3rd columns) orbitals for each excitation
+    (numpy.ndarray, uint32) :
+        Index of the origin determinant of each excitation in the dets array
+    """
+
+    cdef size_t det_idx
+    cdef unsigned long num_dets = occ_orbs.shape[0]
+    cdef unsigned int num_elec = occ_orbs.shape[1]
+    cdef unsigned int num_orb = orb_symm.shape[0]
+    cdef unsigned int n_unocc = num_orb - num_elec / 2
+    cdef unsigned int n_same = num_elec * (num_elec / 2 - 1) / 2 * n_unocc * (n_unocc - 1) / 2
+    cdef unsigned int n_diff = num_elec / 2 * num_elec / 2 * n_unocc ** 2
+    cdef unsigned int tot_sampl = num_dets * (n_same + n_diff)
+
+    cdef numpy.ndarray[numpy.uint8_t, ndim=2] chosen_orbs = numpy.zeros([tot_sampl, 4],
+                                                                        dtype=numpy.uint8)
+    cdef numpy.ndarray[numpy.uint32_t] idx_arr = numpy.zeros(tot_sampl, dtype=numpy.uint32)
+
+    cdef size_t j, num_ex, start_idx = 0
+
+    for det_idx in range(num_dets):
+        _doub_ex_symm(dets[det_idx], &occ_orbs[det_idx, 0], num_elec, &chosen_orbs[start_idx, 0], orb_symm, &num_ex)
+
+        for j in range(num_ex):
+            idx_arr[start_idx + j] = det_idx
+        start_idx += num_ex
+
+    return chosen_orbs[:start_idx], idx_arr[:start_idx]
+
+
+cdef void _doub_ex_symm(long long det, unsigned char *occ_orbs, unsigned int num_elec,
+                        unsigned char *res_arr, unsigned char[:] symm, size_t *n_ex) nogil:
+    """
+    Generate all spin- and symmetry allowed double excitations from a Slater determinant.
+    """
+    cdef unsigned char i, i_orb, j, j_orb, k, l
+    cdef unsigned int idx = 0
+    cdef unsigned int num_orb = symm.shape[0]
+    # Different-spin excitations
+    for i in range(num_elec / 2):
+        i_orb = occ_orbs[i]
+        for j in range(num_elec / 2, num_elec):
+            j_orb = occ_orbs[j]
+            for k in range(num_orb):
+                if not(det & (< long long > 1 << k)):
+                    for l in range(num_orb, 2 * num_orb):
+                        if not(det & (< long long > 1 << l)) and (symm[i_orb] ^ symm[j_orb - num_orb] ^ symm[k] ^ symm[l - num_orb]) == 0:
+                            res_arr[idx] = i_orb
+                            res_arr[idx + 1] = j_orb
+                            res_arr[idx + 2] = k
+                            res_arr[idx + 3] = l
+                            idx += 4
+    # Same-spin (up) excitations
+    for i in range(num_elec / 2):
+        i_orb = occ_orbs[i]
+        for j in range(i + 1, num_elec / 2):
+            j_orb = occ_orbs[j]
+            for k in range(num_orb):
+                if not(det & (< long long > 1 << k)):
+                    for l in range(k + 1, num_orb):
+                        if not(det & (< long long > 1 << l)) and (symm[i_orb] ^ symm[j_orb] ^ symm[k] ^ symm[l]) == 0:
+                            res_arr[idx] = i_orb
+                            res_arr[idx + 1] = j_orb
+                            res_arr[idx + 2] = k
+                            res_arr[idx + 3] = l
+                            idx += 4
+    # Same-spin (down) excitations
+    for i in range(num_elec / 2, num_elec):
+        i_orb = occ_orbs[i]
+        for j in range(i + 1, num_elec):
+            j_orb = occ_orbs[j]
+            for k in range(num_orb, 2 * num_orb):
+                if not(det & (< long long > 1 << k)):
+                    for l in range(k + 1, 2 * num_orb):
+                        if not(det & (< long long > 1 << l)) and (symm[i_orb - num_orb] ^
+                                                                  symm[j_orb - num_orb] ^
+                                                                  symm[k - num_orb] ^ symm[l - num_orb]) == 0:
+                            res_arr[idx] = i_orb
+                            res_arr[idx + 1] = j_orb
+                            res_arr[idx + 2] = k
+                            res_arr[idx + 3] = l
+                            idx += 4
+    n_ex[0] = idx / 4

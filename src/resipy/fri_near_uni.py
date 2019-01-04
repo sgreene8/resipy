@@ -57,7 +57,9 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
     # First layer of compression: singles vs. doubles
     sing_doub = numpy.array([[1 - p_doub], [p_doub]])
     num_dets = sol_vec.values.shape[0]
-    new_weights = sing_doub * sol_vec.values
+    # vec_reweights = (1 + numpy.abs(sol_vec.values) * (n_sample - num_dets)) / n_sample
+    vec_reweights = numpy.abs(sol_vec.values)
+    new_weights = sing_doub * vec_reweights
     new_weights.shape = -1  # singles first, then doubles
 
     fri_idx, fri_vals = compress_utils.fri_1D(new_weights, n_sample)
@@ -100,18 +102,9 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
     det_idx, occ_idx = all_arrs
     doub_occ, doub_wts, doub_nvirt = doub_arrs
     n_doub = doub_occ.shape[0]
-    # sampl_idx = fri_idx[:, 0]
 
-    # doub_idx_shift = n_sing
-    # sampl_idx isn't necessarily sorted, but that's ok because single excitation elements come first
-    # n_sing = numpy.searchsorted(sampl_idx, n_sing)
-    # det_idx = det_idx[sampl_idx]
-    # occ_idx = occ_idx[sampl_idx]
     virt_idx = fri_idx[:, 1]
-    # doub_occ = doub_occ[sampl_idx[n_sing:] - doub_idx_shift]
-    # doub_wts = doub_wts[sampl_idx[n_sing:] - doub_idx_shift, virt_idx[n_sing:]]
     doub_wts = doub_wts[seq_idx[:n_doub], virt_idx[n_sing:]]
-    # doub_nvirt = doub_nvirt[sampl_idx[n_sing:] - doub_idx_shift, virt_idx[n_sing:]]
     doub_nvirt = doub_nvirt[seq_idx[:n_doub], virt_idx[n_sing:]]
 
     orb_counts = numpy.append(numpy.ones(n_sing), doub_nvirt)
@@ -134,10 +127,9 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
     n_orb = orb_symm.shape[0]
     virt_choices = near_uniform.virt_symm_idx(sol_vec.indices[sing_det_idx], symm_lookup,
                                               orb_symm[sing_occ % n_orb], (sing_occ / n_orb) * n_orb)
-    # tmp_idx = numpy.arange(n_sing, dtype=numpy.uint32)
     sing_orb[:, 1] = virt_choices[seq_idx[:n_sing], virt_idx[sampl_idx[sing_idx]]]
     sing_probs = ((1 - p_doub) / occ_allow[sing_det_idx, 0] / virt_allow[sing_det_idx, sing_orb_idx]
-                  * sol_vec.values[sing_det_idx] / fri_vals[sing_idx])
+                  * vec_reweights[sing_det_idx] / fri_vals[sing_idx])
 
     # Handle double excitations
     doub_det_idx = det_idx[sampl_idx[doub_idx]]
@@ -151,6 +143,6 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
     doub_unocc.sort(axis=1)
     doub_orb[:, 2:] = doub_unocc
     doub_probs = (p_doub / n_occ_pair * doub_wts[sampl_idx[doub_idx] - doub_idx_shift] / doub_nvirt[sampl_idx[doub_idx] - doub_idx_shift]
-                  * sol_vec.values[doub_det_idx] / fri_vals[doub_idx])
+                  * vec_reweights[doub_det_idx] / fri_vals[doub_idx])
 
     return doub_orb, doub_probs, doub_det_idx, sing_orb, sing_probs, sing_det_idx

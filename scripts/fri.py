@@ -30,9 +30,9 @@ def main():
     # Initialize solution vector
     if args.restart:
         ini_idx = numpy.load(args.restart + 'vec_idx.npy')
-        vec_val = numpy.load(args.restart + 'vec_val.npy')
+        ini_val = numpy.load(args.restart + 'vec_val.npy').astype(numpy.float64)
         en_shift = numpy.genfromtxt(args.restart + 'S.txt')[-1]
-        last_norm = numpy.abs(vec_val).sum()
+        last_norm = numpy.abs(ini_val).sum()
     else:
         ini_idx = numpy.array([hf_det], dtype=numpy.int64)
         ini_val = numpy.array([1.])
@@ -42,8 +42,8 @@ def main():
     one_norm = last_norm
 
     sol_vec = sparse_vector.SparseVector(ini_idx, ini_val)
-    occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, 2 * n_orb, args.n_elec -
-                                         args.frozen, byte_nums, byte_idx)
+    occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, args.n_elec - args.frozen,
+                                         byte_nums, byte_idx)
 
     results = io_utils.setup_results(args.result_int, args.result_dir,
                                      args.rayleigh, False, args.interval)
@@ -76,7 +76,8 @@ def main():
                 sol_vec.indices, occ_orbs, symm)
             sing_probs = numpy.ones_like(sing_idx, dtype=numpy.float64)
         elif args.sampl_mode == "multinomial":
-            n_col, = compress_utils.sys_resample(numpy.abs(sol_vec.values), args.H_sample, ret_counts=True)
+            n_col, = compress_utils.sys_resample(numpy.abs(sol_vec.values) / one_norm, args.H_sample - sol_vec.values.shape[0], ret_counts=True)
+            n_col += 1
             n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
                 n_col, p_doub)
 
@@ -138,27 +139,27 @@ def main():
 
         # Diagonal matrix elements
         diag_matrel = fci_c_utils.diag_matrel(
-            occ_orbs, h_core, eris, args.frozen) - hf_en - en_shift
-        diag_matrel = 1 - args.epsilon * diag_matrel
-        diag_matrel *= sol_vec.values
-        next_vec = sparse_vector.SparseVector(sol_vec.indices, diag_matrel)
+            occ_orbs, h_core, eris, args.frozen) - hf_en
+        diag_vals = 1 - args.epsilon * (diag_matrel - en_shift)
+        diag_vals *= sol_vec.values
+        next_vec = sparse_vector.SparseVector(sol_vec.indices, diag_vals)
 
         # Add vectors in sparse format
         next_vec.add(spawn_dets, spawn_vals)
         one_norm = next_vec.one_norm()
-        # next_vec.values /= one_norm
         if (iterat + 1) % args.interval == 0:
             en_shift -= args.damping / args.interval / args.epsilon * numpy.log(one_norm / last_norm)
-            io_utils.calc_ray_quo(results, sol_vec, next_vec, iterat, args.epsilon)
-        last_norm = one_norm
+            last_norm = one_norm
+        if args.rayleigh != 0 and (iterat + 1) % args.rayleigh == 0:
+            io_utils.calc_ray_quo(results, sol_vec, occ_orbs, symm, iterat, diag_matrel, h_core, eris, args.frozen)
 
         io_utils.calc_results(results, next_vec, 0, iterat, hf_col)
 
         cmp_idx, cmp_vals = compress_utils.fri_1D(next_vec.values, args.sparsity)
         cmp_dets = next_vec.indices[cmp_idx]
         sol_vec = sparse_vector.SparseVector(cmp_dets, cmp_vals)
-        occ_orbs = fci_c_utils.gen_orb_lists(cmp_dets, 2 * n_orb, args.n_elec -
-                                             args.frozen, byte_nums, byte_idx)
+        occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, args.n_elec - args.frozen,
+                                             byte_nums, byte_idx)
 
 
 def _parse_args():
@@ -195,8 +196,8 @@ def _parse_args():
                         help="Period with which to write results to disk")
     parser.add_argument('-y', '--result_dir', type=str, default=".",
                         help="Directory in which to save output files")
-    parser.add_argument('--rayleigh', action="store_true",
-                        help="Calculate quadratic Rayleigh quotient every 10 iterations")
+    parser.add_argument('--rayleigh', type=int, default=0,
+                        help="Interval at which to calculate exact quadratic rayleigh quotient (0 means it is not calculated).")
     parser.add_argument('-i', '--max_iter', type=int, default=800000,
                         help="Number of iterations to simulate in the trajectory.")
     parser.add_argument('-l', '--restart', type=str,
@@ -245,6 +246,7 @@ def _describe_args(arg_dict):
         file.write("Sampling mode: {}\n".format(arg_dict.sampl_mode))
         if arg_dict.sampl_mode != "all":
             file.write("Number of matrix samples: {}\n".format(arg_dict.H_sample))
+        file.write("Rayleigh quotient interval: {}\n".format(arg_dict.rayleigh))
 
 
 if __name__ == "__main__":

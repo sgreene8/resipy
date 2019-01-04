@@ -170,7 +170,9 @@ def fri_comp(sol_vec, n_nonz, s_tens, d_tens, exch_tens, p_doub, occ_orbs, orb_s
     # First layer of compression: singles vs. doubles
     sing_doub = numpy.array([[1 - p_doub], [p_doub]])
     num_dets = sol_vec.values.shape[0]
-    new_weights = sing_doub * sol_vec.values
+    # vec_reweights = (1 + numpy.abs(sol_vec.values) * (n_nonz - num_dets)) / n_nonz
+    vec_reweights = numpy.abs(sol_vec.values)
+    new_weights = sing_doub * vec_reweights
     new_weights.shape = -1  # singles first, then doubles
 
     fri_idx, fri_vals = compress_utils.fri_1D(new_weights, n_nonz)
@@ -200,6 +202,7 @@ def fri_comp(sol_vec, n_nonz, s_tens, d_tens, exch_tens, p_doub, occ_orbs, orb_s
     occ_idx = numpy.append(occ_idx, occ_doub)  # index of occupied orbital
     doub_sampl_idx = sampl_idx[n_sing:] - doub_idx_shift
     occ_doub_probs = o1_probs[doub_sampl_idx, occ_doub]
+    o1_probs = o1_probs[doub_sampl_idx]
 
     # Third layer of compression: allowed virtual orbitals for singles, second occ orbital for doubles
     occ_expand = occ_orbs[det_idx[n_sing:]]
@@ -213,12 +216,14 @@ def fri_comp(sol_vec, n_nonz, s_tens, d_tens, exch_tens, p_doub, occ_orbs, orb_s
     fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, virt_allow[det_idx[:n_sing], occ_idx[:n_sing]],
                                                 o2_probs, n_nonz)
 
-    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(fri_idx[:, 0], n_sing, [det_idx, occ_idx], [], [doub_o1, occ_doub_probs, o2_probs])
+    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(fri_idx[:, 0], n_sing, [det_idx, occ_idx], [], [doub_o1, occ_doub_probs, o1_probs, o2_probs])
     det_idx, occ_idx = all_arrs
-    doub_o1, occ_doub_probs, o2_probs = doub_arrs
+    doub_o1, occ_doub_probs, o1_probs, o2_probs = doub_arrs
 
     sing_virt_idx = fri_idx[:n_sing, 1]
     doub_o2_idx = fri_idx[n_sing:, 1]
+    n_doub = fri_idx.shape[0] - n_sing
+    doub_alt_probs = o1_probs[numpy.arange(n_doub), doub_o2_idx]
     doub_o2 = occ_orbs[det_idx[n_sing:], doub_o2_idx]
     occ_doub_probs *= o2_probs[seq_idx[:o2_probs.shape[0]], doub_o2_idx]
 
@@ -227,10 +232,10 @@ def fri_comp(sol_vec, n_nonz, s_tens, d_tens, exch_tens, p_doub, occ_orbs, orb_s
 
     fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, numpy.ones(n_sing, dtype=int), virt1_wts, n_nonz)
 
-    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(fri_idx[:, 0], n_sing, [det_idx, occ_idx], [sing_virt_idx], [doub_o1, doub_o2, occ_doub_probs, virt1_wts])
+    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(fri_idx[:, 0], n_sing, [det_idx, occ_idx], [sing_virt_idx], [doub_o1, doub_o2, occ_doub_probs, doub_alt_probs, virt1_wts])
     det_idx, occ_idx = all_arrs
     sing_virt_idx = sing_arrs[0]
-    doub_o1, doub_o2, occ_doub_probs, virt1_wts = doub_arrs
+    doub_o1, doub_o2, occ_doub_probs, doub_alt_probs, virt1_wts = doub_arrs
 
     spin_o1 = (doub_o1 / n_orb) * n_orb
     doub_u1 = fri_idx[n_sing:, 1]
@@ -243,15 +248,17 @@ def fri_comp(sol_vec, n_nonz, s_tens, d_tens, exch_tens, p_doub, occ_orbs, orb_s
     # Fifth layer of compression: second virtual orbital for doubles
     dets = sol_vec.indices[det_idx[n_sing:]]
     virt2_wts, nonnull = _cs_symm_wts(doub_u1, doub_o2, virt2_symm, dets, exch_tens, lookup_tabl)
-    # Exclude null excitation
-    fri_vals[n_sing:][numpy.logical_not(nonnull)] = 0
+    isnull = numpy.logical_not(nonnull)
+    # Exclude null excitations
+    fri_vals[n_sing:][isnull] = 0
+    virt2_wts[isnull, :] = 0
 
     fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, numpy.ones(n_sing, dtype=int), virt2_wts, n_nonz)
 
-    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(fri_idx[:, 0], n_sing, [det_idx, occ_idx], [sing_virt_idx], [doub_o1, spin_o1, doub_o2, doub_u1, occ_doub_probs, unocc_doub_probs, virt2_wts])
+    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(fri_idx[:, 0], n_sing, [det_idx, occ_idx], [sing_virt_idx], [doub_o1, spin_o1, doub_o2, doub_u1, occ_doub_probs, doub_alt_probs, unocc_doub_probs, virt2_wts])
     det_idx, occ_idx = all_arrs
     sing_virt_idx = sing_arrs[0]
-    doub_o1, spin_o1, doub_o2, doub_u1, occ_doub_probs, unocc_doub_probs, virt2_wts = doub_arrs
+    doub_o1, spin_o1, doub_o2, doub_u1, occ_doub_probs, doub_alt_probs, unocc_doub_probs, virt2_wts = doub_arrs
     n_doub = doub_o1.shape[0]
 
     spin_o2 = (doub_o2 / n_orb) * n_orb
@@ -268,10 +275,11 @@ def fri_comp(sol_vec, n_nonz, s_tens, d_tens, exch_tens, p_doub, occ_orbs, orb_s
     sing_orb[:, 0] = sing_occ
     sing_orb[:, 1] = virt_choices[seq_idx[:n_sing], sing_virt_idx]
     sing_probs = ((1 - p_doub) / occ_allow[sing_det_idx, 0] / virt_allow[sing_det_idx, occ_idx[:n_sing]]
-                  * sol_vec.values[sing_det_idx] / fri_vals[:n_sing])
+                  * vec_reweights[sing_det_idx] / fri_vals[:n_sing])
 
     # process double excitations
     doub_det_idx = det_idx[n_sing:]
+    doub_alt_probs *= d_tens[doub_o2, doub_o1] / d_tens[doub_o2[:, numpy.newaxis], occ_orbs[doub_det_idx]].sum(axis=1)
 
     doub_occ = numpy.zeros([n_doub, 2], dtype=numpy.uint8)
     doub_occ[:, 0] = doub_o1
@@ -283,30 +291,23 @@ def fri_comp(sol_vec, n_nonz, s_tens, d_tens, exch_tens, p_doub, occ_orbs, orb_s
     doub_unocc.sort(axis=1)
     doub_orb = numpy.append(doub_occ, doub_unocc, axis=1)
 
-    norms = 1. / s_tens[occ_orbs[doub_det_idx]].sum(axis=1)
-    alt_doub_occ = s_tens[doub_o2] * norms
-
-    alt_doub_occ = d_tens[doub_o2 % n_orb, doub_o1 % n_orb] / d_tens[doub_o2[:, numpy.newaxis] % n_orb, occ_orbs[doub_det_idx]].sum(axis=1)
-
     same_spin = spin_o1 == spin_o2
+    new_det_idx = doub_det_idx[same_spin]
+    dets = sol_vec.indices[new_det_idx]
     doub_o1 = doub_o1[same_spin]
     doub_o2 = doub_o2[same_spin]
     doub_u1 = doub_u1[same_spin]
     doub_u2 = doub_u2[same_spin]
-    virt1_wts_rev = _cs_virt_wts(doub_o2, doub_det_idx[same_spin], exch_tens, occ_orbs)
-    n_same = doub_u2.shape[0]
-    alt_doub_unoccc = virt1_wts_rev[seq_idx[:n_same], doub_u2 % n_orb]
-
+    virt1_wts_rev = _cs_virt_wts(doub_o2, new_det_idx, exch_tens, occ_orbs)
     virt2_symm = (orb_symm[doub_o1 % n_orb] ^ orb_symm[doub_o2 % n_orb] ^
                   orb_symm[doub_u2 % n_orb])
-    dets = sol_vec.indices[doub_det_idx[same_spin]]
     virt2_wts_rev, nonnull = _cs_symm_wts(doub_u2, doub_o1, virt2_symm, dets, exch_tens, lookup_tabl)
-    alt_doub_unoccc *= virt2_wts_rev[seq_idx[:n_same], doub_u1 % n_orb]
 
-    occ_doub_probs += alt_doub_occ
-    unocc_doub_probs[same_spin] += alt_doub_unoccc
+    tmp_idx = numpy.arange(doub_o2.shape[0], dtype=numpy.uint32)
+    unocc_doub_probs[same_spin] += virt1_wts_rev[tmp_idx, doub_u2 % n_orb] * virt2_wts_rev[tmp_idx, doub_u1 % n_orb]
+    occ_doub_probs += doub_alt_probs
 
-    doub_probs = p_doub * occ_doub_probs * unocc_doub_probs * sol_vec.values[doub_det_idx] / fri_vals[n_sing:]
+    doub_probs = p_doub * occ_doub_probs * unocc_doub_probs * vec_reweights[doub_det_idx] / fri_vals[n_sing:]
 
     return doub_orb, doub_probs, doub_det_idx, sing_orb, sing_probs, sing_det_idx
 

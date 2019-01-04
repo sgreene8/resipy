@@ -41,8 +41,8 @@ def main():
         last_nwalk = 0  # number of walkers at the time of previous shift update
 
     sol_vec = sparse_vector.SparseVector(ini_idx, ini_val)
-    occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, 2 * n_orb, args.n_elec -
-                                         args.frozen, byte_nums, byte_idx)
+    occ_orbs = fci_c_utils.gen_orb_lists(sol_vec.indices, args.n_elec - args.frozen,
+                                         byte_nums, byte_idx)
 
     results = io_utils.setup_results(args.result_int, args.result_dir,
                                      args.rayleigh, True, args.interval)
@@ -115,27 +115,28 @@ def main():
 
         # Diagonal matrix elements
         diag_matrel = fci_c_utils.diag_matrel(
-            occ_orbs, h_core, eris, args.frozen) - en_shift - hf_en
-        diag_matrel = 1 - args.epsilon * diag_matrel
-        diag_matrel *= numpy.sign(sol_vec.values)
-        diag_matrel = compress_utils.round_binomially(diag_matrel, n_col)
+            occ_orbs, h_core, eris, args.frozen)- hf_en
+        diag_vals = 1 - args.epsilon * (diag_matrel - en_shift)
+        diag_vals *= numpy.sign(sol_vec.values)
+        diag_vals = compress_utils.round_binomially(diag_vals, n_col)
         # Retain nonzero elements
-        diag_nonz = diag_matrel != 0
+        diag_nonz = diag_vals != 0
         next_vec = sparse_vector.SparseVector(
-            sol_vec.indices[diag_nonz], diag_matrel[diag_nonz])
+            sol_vec.indices[diag_nonz], diag_vals[diag_nonz])
 
         # Add vectors in sparse format
         next_vec.add(spawn_dets, spawn_vals)
-        occ_orbs = fci_c_utils.gen_orb_lists(next_vec.indices, 2 * n_orb, args.n_elec -
-                                             args.frozen, byte_nums, byte_idx)
         n_walk = next_vec.one_norm()
         if (iterat + 1) % args.interval == 0:
             en_shift, last_nwalk = _adjust_shift(
                 en_shift, n_walk, last_nwalk, args.walker_target, args.damping / args.interval / args.epsilon)
-            io_utils.calc_ray_quo(results, sol_vec, next_vec, iterat, args.epsilon)
+        if args.rayleigh != 0 and (iterat + 1) % args.rayleigh == 0:
+            io_utils.calc_ray_quo(results, sol_vec, occ_orbs, symm, iterat, diag_matrel, h_core, eris, args.frozen)
 
         io_utils.calc_results(results, next_vec, en_shift, iterat, hf_col)
         sol_vec = next_vec
+        occ_orbs = fci_c_utils.gen_orb_lists(next_vec.indices, args.n_elec - args.frozen,
+                                             byte_nums, byte_idx)
 
 
 def _adjust_shift(shift, n_walkers, last_walkers, target_walkers, damp_factor):
@@ -171,7 +172,7 @@ def _parse_args():
     parser.add_argument('-s', '--initial_shift', type=float, default=0.,
                         help="Initial energy shift (S) for controlling normalization")
     parser.add_argument('-a', '--interval', type=int, default=10,
-                        help="Period with which to update the energy shift (A) and calculate the quadratic Rayleigh quotient, if desired.")
+                        help="Period with which to update the energy shift (A).")
     parser.add_argument('-d', '--damping', type=float, default=0.05,
                         help="Damping parameter for shift updates (xi)")
     parser.add_argument('-p', '--procs', type=int, default=8,
@@ -182,8 +183,8 @@ def _parse_args():
                         help="Period with which to write results to disk")
     parser.add_argument('-y', '--result_dir', type=str, default=".",
                         help="Directory in which to save output files")
-    parser.add_argument('--rayleigh', action="store_true",
-                        help="Calculate quadratic Rayleigh quotient every A iterations")
+    parser.add_argument('--rayleigh', type=int, default=0,
+                        help="Interval at which to calculate exact quadratic rayleigh quotient (0 means it is not calculated).")
     parser.add_argument('-i', '--max_iter', type=int, default=800000,
                         help="Number of iterations to simulate in the trajectory.")
     parser.add_argument('-l', '--restart', type=str,
@@ -233,6 +234,7 @@ def _describe_args(arg_dict):
             file.write("Restarting calculation from {}\n".format(arg_dict.restart))
         file.write("epsilon (imaginary time step): {}\n".format(arg_dict.epsilon))
         file.write("Target number of walkers: {}\n".format(arg_dict.walker_target))
+        file.write("Rayleigh quotient interval: {}\n".format(arg_dict.rayleigh))
 
 
 if __name__ == "__main__":

@@ -429,3 +429,37 @@ def _alias_2D(double[:, :] probs):
                 Q[j, i] = 1.
 
     return aliases, Q
+
+
+# def count_bits_utri(long long[:, :] bit_str):
+#     """ Count the number of 1's in the binary representation of each integer in the upper-right
+#     half of a matrix.
+
+#     Parameters
+#     ----------
+#     bit_str : (numpy.ndarray, int64)
+#         square 2-D array containing the integers whose bits to count
+
+#     Returns
+#     -------
+#     (numpy.ndarray, uint8)
+#         number of 1's counted in each integer considered
+#     """
+#     cdef size_t arr_size = bit_str.shape[0]
+#     cdef numpy.ndarray[numpy.uint8_t, ndim=2] counts =  numpy.zeros([arr_size, arr_size], dtype=numpy.uint8)
+#     cdef size_t row_idx, col_idx
+#     cdef unsigned char[16] byte_counts = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4]
+#     cdef unsigned int n_threads = openmp.omp_get_max_threads()
+#     cdef unsigned char n_bits
+#     cdef long long curr_int
+
+#     for row_idx in prange(arr_size - 1, nogil=True, schedule=static, num_threads=n_threads):
+#         for col_idx in range(row_idx + 1, arr_size):
+#             n_bits = 0
+#             curr_int = bit_str[row_idx, col_idx]
+#             while curr_int != 0:
+#                 n_bits = n_bits + byte_counts[curr_int & 15]
+#                 curr_int = curr_int >> 4
+#             counts[row_idx, col_idx] = n_bits
+
+#     return counts
