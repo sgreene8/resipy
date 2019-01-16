@@ -214,13 +214,13 @@ def ray_off_diag(long long[:] dets, double[:] values, unsigned char[:, :] occ_or
     cdef int search_idx, excite_sign
     cdef double matr_el, ray_num = 0
 
-    for row_det_idx in prange(n_dets - 1, nogil=True, schedule=dynamic):
+    for row_det_idx in prange(n_dets - 1, nogil=True, schedule=static, num_threads=n_threads):
         thread_idx = threadid()
         curr_det = dets[row_det_idx]
-        _sing_ex_symm(curr_det, &occ_orbs[row_det_idx, 0], num_elec, &sing_ex[thread_idx, 0, 0],
-                      orb_symm, &n_sing)
-        _doub_ex_symm(curr_det, &occ_orbs[row_det_idx, 0], num_elec, &doub_ex[thread_idx, 0, 0],
-                      orb_symm, &n_doub)
+        n_sing = _sing_ex_symm(curr_det, &occ_orbs[row_det_idx, 0], num_elec, &sing_ex[thread_idx, 0, 0],
+                               orb_symm)
+        n_doub = _doub_ex_symm(curr_det, &occ_orbs[row_det_idx, 0], num_elec, &doub_ex[thread_idx, 0, 0],
+                               orb_symm)
         for ex_idx in range(n_sing):
             search_det = curr_det ^ (< long long > 1 << sing_ex[thread_idx, ex_idx, 0])
             search_det = search_det ^ (< long long > 1 << sing_ex[thread_idx, ex_idx, 1])
@@ -431,8 +431,8 @@ def all_sing_ex(long long[:] dets, unsigned char[:, :] occ_orbs, unsigned char[:
     cdef size_t num_ex, j, start_idx = 0
 
     for det_idx in range(num_dets):
-        _sing_ex_symm(dets[det_idx], &occ_orbs[det_idx, 0], num_elec, &chosen_orbs[start_idx, 0],
-                      orb_symm, &num_ex)
+        num_ex = _sing_ex_symm(dets[det_idx], &occ_orbs[det_idx, 0], num_elec, &chosen_orbs[start_idx, 0],
+                               orb_symm)
         for j in range(num_ex):
             idx_arr[start_idx + j] = det_idx
         start_idx += num_ex
@@ -464,13 +464,13 @@ cdef void _sing_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_
                 idx += 2
 
 
-cdef void _sing_ex_symm(long long det, unsigned char *occ_orbs, unsigned int num_elec,
-                        unsigned char *res_arr, unsigned char[:] symm, size_t *n_ex) nogil:
+cdef size_t _sing_ex_symm(long long det, unsigned char *occ_orbs, unsigned int num_elec,
+                          unsigned char *res_arr, unsigned char[:] symm) nogil:
     """
     Generate all spin- and symmetry-allowed single excitations from a Slater determinant.
     """
     cdef unsigned char i, i_orb, j
-    cdef unsigned int idx = 0
+    cdef size_t idx = 0
     cdef unsigned int num_orb = symm.shape[0]
     for i in range(num_elec / 2):
         i_orb = occ_orbs[i]
@@ -486,7 +486,7 @@ cdef void _sing_ex_symm(long long det, unsigned char *occ_orbs, unsigned int num
                 res_arr[idx] = i_orb
                 res_arr[idx + 1] = j
                 idx += 2
-    n_ex[0] = idx / 2
+    return idx / 2
 
 
 cdef void _doub_ex(long long det, unsigned char[:] occ_orbs, unsigned char *res_arr,
@@ -577,7 +577,7 @@ def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, unsigned char[:
     cdef size_t j, num_ex, start_idx = 0
 
     for det_idx in range(num_dets):
-        _doub_ex_symm(dets[det_idx], &occ_orbs[det_idx, 0], num_elec, &chosen_orbs[start_idx, 0], orb_symm, &num_ex)
+        num_ex = _doub_ex_symm(dets[det_idx], &occ_orbs[det_idx, 0], num_elec, &chosen_orbs[start_idx, 0], orb_symm)
 
         for j in range(num_ex):
             idx_arr[start_idx + j] = det_idx
@@ -586,8 +586,8 @@ def all_doub_ex(long long[:] dets, unsigned char[:, :] occ_orbs, unsigned char[:
     return chosen_orbs[:start_idx], idx_arr[:start_idx]
 
 
-cdef void _doub_ex_symm(long long det, unsigned char *occ_orbs, unsigned int num_elec,
-                        unsigned char *res_arr, unsigned char[:] symm, size_t *n_ex) nogil:
+cdef size_t _doub_ex_symm(long long det, unsigned char *occ_orbs, unsigned int num_elec,
+                          unsigned char *res_arr, unsigned char[:] symm) nogil:
     """
     Generate all spin- and symmetry allowed double excitations from a Slater determinant.
     """
@@ -638,4 +638,59 @@ cdef void _doub_ex_symm(long long det, unsigned char *occ_orbs, unsigned int num
                             res_arr[idx + 2] = k
                             res_arr[idx + 3] = l
                             idx += 4
-    n_ex[0] = idx / 4
+    return idx / 4
+
+
+def hande_idx(unsigned char[:, :] occ_orbs, unsigned int num_orb):
+    cdef size_t num_dets = occ_orbs.shape[0]
+    cdef unsigned int num_elec = occ_orbs.shape[1]
+    cdef size_t det_idx
+    cdef unsigned int up_idx, dn_idx, elec_idx
+    cdef numpy.ndarray[numpy.uint32_t] indices = numpy.zeros(num_dets, dtype=numpy.uint32)
+    cdef unsigned int half_fci = choose(num_orb, num_elec / 2)
+
+    for det_idx in prange(num_dets, nogil=True, schedule=static):
+        up_idx = 0
+        for elec_idx in range(num_elec / 2):
+            up_idx = up_idx + z_hande(elec_idx, occ_orbs[det_idx, elec_idx], num_orb, num_elec / 2)
+        dn_idx = 0
+        for elec_idx in range(num_elec / 2):
+            dn_idx = dn_idx + z_hande(elec_idx, occ_orbs[det_idx, num_elec / 2 + elec_idx], num_orb, num_elec / 2)
+        indices[det_idx] = up_idx * half_fci + dn_idx
+    return indices
+
+
+cdef unsigned int z_hande(unsigned int k, unsigned int l, unsigned int num_orb,
+                          unsigned int num_elec) nogil:
+    # eq 11 in Knowles and Hande (1984)
+    cdef unsigned int m
+    cdef unsigned int ret_sum = 0
+    k += 1
+    l += 1
+    if k == num_elec:
+        return l - num_elec
+    for m in range(num_orb - l + 1, num_orb - k + 1):
+        ret_sum += choose(m, num_elec - k) - choose(m - 1, num_elec - k - 1)
+    return ret_sum
+
+
+cdef unsigned int choose(unsigned int m, unsigned int k) nogil:
+    # Calculate m choose k, m >= k
+    cdef unsigned int idx, result = 1
+    cdef unsigned int smaller, bigger
+
+    if k > (m / 2):
+        smaller = m - k
+        bigger = k
+    else:
+        smaller = k
+        bigger = m - k
+
+    for idx in range(bigger + 1, m + 1):
+        result *= idx
+    for idx in range(2, smaller + 1):
+        result /= idx
+
+    return result
+
+

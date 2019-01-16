@@ -6,6 +6,7 @@ import numpy
 from resipy import fci_c_utils
 from resipy import fci_utils
 from resipy import misc_c_utils
+import sys
 
 
 def setup_results(buf_len, res_dir, ray_int, fciqmc, shift_int):
@@ -91,6 +92,14 @@ def calc_ray_quo(r_dict, sol_vec, occ_orbs, symm, iter_num, diag_el, h_core, eri
     r_dict['ray_num'][1][res_idx] = numer2
 
 
+def check_ray_quo(sol_vec, occ_orbs, symm, diag_el, h_core, eris, n_frozen):
+    self_overlap = numpy.linalg.norm(sol_vec.values)**2
+    off_diag = fci_c_utils.ray_off_diag(sol_vec.indices, sol_vec.values.astype(numpy.float64), occ_orbs,
+                                        h_core, eris, n_frozen, symm)
+    num_diag = numpy.sum(diag_el * sol_vec.values**2)
+    return num_diag, off_diag, self_overlap
+
+
 def calc_results(r_dict, vec, shift, iter_num, hf_col):
     """Estimate the correlation energy from the current iterate and write results
         to file, if necessary.
@@ -129,6 +138,7 @@ def calc_results(r_dict, vec, shift, iter_num, hf_col):
             r_dict['sparsity'][1][res_idx / shift_int] = vec.indices.shape[0]
 
     if ((iter_num + 1) % buf_len) == 0:
+        sys.stdout.flush()
         numpy.savetxt(r_dict['proj_num'][0], r_dict['proj_num'][1])
         numpy.savetxt(r_dict['proj_den'][0], r_dict['proj_den'][1])
         vec.save(r_dict['vec_file'])

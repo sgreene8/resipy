@@ -52,11 +52,12 @@ def main():
         n_doub_ref = fci_utils.count_doubex(occ_orbs[0], symm, symm_lookup)
         n_sing_ref = fci_utils.count_singex(
             hf_det, occ_orbs[0], symm, symm_lookup)
-        p_doub = n_doub_ref * 1.0 / (n_sing_ref + n_doub_ref)
+        num_hf = n_sing_ref + n_doub_ref
+        p_doub = n_doub_ref * 1.0 / num_hf
     if args.sampl_mode != "all" and args.dist == "heat-bath_PP":
         from resipy import heat_bath
         occ1_probs, occ2_probs, exch_probs = heat_bath.set_up(args.frozen, eris)
-    if args.sampl_mode == "fri" and args.dist == "near_uniform":
+    if (args.sampl_mode == "fri" or args.sampl_mode == "fri_strat") and args.dist == "near_uniform":
         from resipy import fri_near_uni
 
     rngen_ptrs = near_uniform.initialize_mt(args.procs)
@@ -75,6 +76,10 @@ def main():
             sing_orbs, sing_idx = fci_c_utils.all_sing_ex(
                 sol_vec.indices, occ_orbs, symm)
             sing_probs = numpy.ones_like(sing_idx, dtype=numpy.float64)
+
+            print('number of off-diagonal matrix evaluations:')
+            print(doub_probs.shape[0] + sing_probs.shape[0])
+            
         elif args.sampl_mode == "multinomial":
             n_col, = compress_utils.sys_resample(numpy.abs(sol_vec.values) / one_norm, args.H_sample - sol_vec.values.shape[0], ret_counts=True)
             n_col += 1
@@ -85,21 +90,25 @@ def main():
             # Sample single excitations
             sing_orbs, sing_probs, sing_idx = near_uniform.sing_multin(
                 sol_vec.indices, occ_orbs, symm, symm_lookup, n_sing_col, rngen_ptrs)
-            sing_probs *= n_sing_col[sing_idx]
+            sing_probs *= (1 - p_doub) * n_col[sing_idx]
         if args.dist == "near_uniform" and args.sampl_mode == "multinomial":
             # Sample double excitations
             doub_orbs, doub_probs, doub_idx = near_uniform.doub_multin(
                 sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
-            doub_probs *= n_doub_col[doub_idx]
+            doub_probs *= p_doub * n_col[doub_idx]
         elif args.dist == "near_uniform" and args.sampl_mode == "fri":
             # Compress both excitations
             doub_orbs, doub_probs, doub_idx, sing_orbs, sing_probs, sing_idx = fri_near_uni.cmp_hier(sol_vec, args.H_sample, p_doub,
                                                                                                      occ_orbs, symm, symm_lookup)
+        elif args.dist == "near_uniform" and args.sampl_mode == "fri_strat":
+            # Compress both excitations
+            doub_orbs, doub_probs, doub_idx, sing_orbs, sing_probs, sing_idx = fri_near_uni.cmp_hier_strat(sol_vec, args.H_sample, p_doub,
+                                                                                                     occ_orbs, symm, symm_lookup, num_hf, rngen_ptrs)
         elif args.dist == "heat-bath_PP" and args.sampl_mode == "multinomial":
             # Sample double excitations
             doub_orbs, doub_probs, doub_idx = heat_bath.doub_multin(
                 occ1_probs, occ2_probs, exch_probs, sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
-            doub_probs *= n_doub_col[doub_idx]
+            doub_probs *= p_doub * n_col[doub_idx]
         elif args.dist == "heat-bath_PP" and args.sampl_mode == "fri":
             doub_orbs, doub_probs, doub_idx, sing_orbs, sing_probs, sing_idx = heat_bath.fri_comp(sol_vec, args.H_sample, occ1_probs, occ2_probs, exch_probs, p_doub, occ_orbs, symm, symm_lookup)
 
@@ -153,7 +162,7 @@ def main():
         if args.rayleigh != 0 and (iterat + 1) % args.rayleigh == 0:
             io_utils.calc_ray_quo(results, sol_vec, occ_orbs, symm, iterat, diag_matrel, h_core, eris, args.frozen)
 
-        io_utils.calc_results(results, next_vec, 0, iterat, hf_col)
+        io_utils.calc_results(results, next_vec, en_shift, iterat, hf_col)
 
         cmp_idx, cmp_vals = compress_utils.fri_1D(next_vec.values, args.sparsity)
         cmp_dets = next_vec.indices[cmp_idx]
@@ -178,7 +187,7 @@ def _parse_args():
                         help="Total number of off-diagonal samples to draw from the Hamiltonian matrix")
     parser.add_argument('sparsity', type=int,
                         help="Target number of nonzero elements in the solution vector")
-    parser.add_argument('sampl_mode', choices=["all", "multinomial", "fri"],
+    parser.add_argument('sampl_mode', choices=["all", "multinomial", "fri", "fri_strat"],
                         help="Method for sampling off-diagonal Hamiltonian elements.")
     parser.add_argument('--dist', choices=["near_uniform", "heat-bath_PP"],
                         help="Probability distribution to use to select Hamiltonian off-diagonal elements")

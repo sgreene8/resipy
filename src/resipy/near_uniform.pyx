@@ -1,4 +1,4 @@
-# cython: boundscheck=False, wraparound=False, cdivision=True
+# cython: boundscheck=True, wraparound=False, cdivision=True
 """
 Utilities for sampling the Near-Uniform distribution described in
 Booth et al. (2014) (doi:10.1080/00268976.2013.877165).
@@ -10,6 +10,7 @@ cimport numpy
 cimport cython
 from libc.math cimport sqrt, fabs, pow
 from libc.time cimport time
+from libc.stdio cimport printf
 
 
 cdef extern from "dc.h":
@@ -324,7 +325,7 @@ def symm_pair_wt(unsigned int[:, :, :] virt_counts, unsigned char[:, :] occ_orbs
     xor_idx[1][:] = [1, 3, 5, 7, 0, 0, 0, 0]
     xor_idx[2][:] = [2, 3, 6, 7, 0, 0, 0, 0]
     xor_idx[3][:] = [4, 5, 6, 7, 0, 0, 0, 0]
-    cdef orb_pair occ_pair
+    cdef orb_pair occ
     cdef unsigned int curr_det, n_symm1, n_symm2, sym_prod, symm_idx
     cdef unsigned int tot_virt
     cdef unsigned int num_symm_pair, xor_row_idx, occ_same
@@ -335,44 +336,97 @@ def symm_pair_wt(unsigned int[:, :, :] virt_counts, unsigned char[:, :] occ_orbs
 
     for sampl_idx in range(n_samples):
         curr_det = det_idx[sampl_idx]
-        occ = _tri_to_occ_pair(&occ_orbs[curr_det, 0], num_elec, opair_tri[sampl_idx])
+        occ = _symm_pair_wt(&occ_orbs[curr_det, 0], num_elec, opair_tri[sampl_idx],
+                            orb_symm, < unsigned int (*)[2] > &virt_counts[curr_det, 0, 0], xor_idx, n_symm,
+                            &irrep_weights[sampl_idx, 0], &irrep_cts[sampl_idx, 0])
+        # occ = _tri_to_occ_pair(&occ_orbs[curr_det, 0], num_elec, opair_tri[sampl_idx])
         doub_orbs[sampl_idx, 1] = occ.orb1
         doub_orbs[sampl_idx, 0] = occ.orb2
-        sym_prod = orb_symm[occ.orb1 % num_orb] ^ orb_symm[occ.orb2 % num_orb]
-        occ_same = sym_prod == 0 and (occ.spin1 == occ.spin2)
+        # sym_prod = orb_symm[occ.orb1 % num_orb] ^ orb_symm[occ.orb2 % num_orb]
+        # occ_same = sym_prod == 0 and (occ.spin1 == occ.spin2)
 
-        m_a_allow = _count_doub_virt(occ, orb_symm, num_elec,
-                                     <unsigned int (*)[2]> &virt_counts[curr_det, 0, 0], n_symm)
-        if m_a_allow == 0:
-            continue
+        # m_a_allow = _count_doub_virt(occ, orb_symm, num_elec,
+        #                              <unsigned int (*)[2]> &virt_counts[curr_det, 0, 0], n_symm)
+        # if m_a_allow == 0:
+        #     continue
 
-        # Get pointer to list to use for enumerating symmetry products
-        if ((occ.spin1 != occ.spin2) or sym_prod == 0):
-            num_symm_pair = n_symm
-            xor_row_idx = 0
-        else:
-            num_symm_pair = n_symm / 2
-            if (sym_prod == 1):
-                xor_row_idx = 1
-            elif (sym_prod == 2 or sym_prod == 3):
-                xor_row_idx = 2
-            else:
-                xor_row_idx = 3
+        # # Get pointer to list to use for enumerating symmetry products
+        # if ((occ.spin1 != occ.spin2) or sym_prod == 0):
+        #     num_symm_pair = n_symm
+        #     xor_row_idx = 0
+        # else:
+        #     num_symm_pair = n_symm / 2
+        #     if (sym_prod == 1):
+        #         xor_row_idx = 1
+        #     elif (sym_prod == 2 or sym_prod == 3):
+        #         xor_row_idx = 2
+        #     else:
+        #         xor_row_idx = 3
 
-        if occ_same:
-            for symm_idx in range(num_symm_pair):
-                n_symm1 = virt_counts[curr_det, xor_idx[xor_row_idx][symm_idx], occ.spin1]
-                if n_symm1 > 1:
-                    irrep_weights[sampl_idx, symm_idx] = 1. * n_symm1 / m_a_allow
-                    irrep_cts[sampl_idx, symm_idx] = n_symm1 * (n_symm1 - 1) / 2
-        else:
-            for symm_idx in range(num_symm_pair):
-                n_symm1 = virt_counts[curr_det, xor_idx[xor_row_idx][symm_idx], occ.spin1]
-                n_symm2 = virt_counts[curr_det, sym_prod ^ xor_idx[xor_row_idx][symm_idx], occ.spin2]
-                if n_symm1 != 0 and n_symm2 != 0:
-                    irrep_weights[sampl_idx, symm_idx] = 1. * (n_symm1 + n_symm2) / m_a_allow
-                    irrep_cts[sampl_idx, symm_idx] = n_symm1 * n_symm2
+        # if occ_same:
+        #     for symm_idx in range(num_symm_pair):
+        #         n_symm1 = virt_counts[curr_det, xor_idx[xor_row_idx][symm_idx], occ.spin1]
+        #         if n_symm1 > 1:
+        #             irrep_weights[sampl_idx, symm_idx] = 1. * n_symm1 / m_a_allow
+        #             irrep_cts[sampl_idx, symm_idx] = n_symm1 * (n_symm1 - 1) / 2
+        # else:
+        #     for symm_idx in range(num_symm_pair):
+        #         n_symm1 = virt_counts[curr_det, xor_idx[xor_row_idx][symm_idx], occ.spin1]
+        #         n_symm2 = virt_counts[curr_det, sym_prod ^ xor_idx[xor_row_idx][symm_idx], occ.spin2]
+        #         if n_symm1 != 0 and n_symm2 != 0:
+        #             irrep_weights[sampl_idx, symm_idx] = 1. * (n_symm1 + n_symm2) / m_a_allow
+        #             irrep_cts[sampl_idx, symm_idx] = n_symm1 * n_symm2
     return irrep_weights, irrep_cts, doub_orbs
+
+
+cdef orb_pair _symm_pair_wt(unsigned char *occ_orbs, unsigned int n_elec, unsigned int tri_idx,
+                            unsigned char[:] orb_symm, unsigned int v_counts[][2],
+                            unsigned char xor_idx[][8], unsigned int n_symm,
+                            double *ret_weights, unsigned char *ret_counts) nogil:
+    cdef orb_pair occ = _tri_to_occ_pair(occ_orbs, n_elec, tri_idx)
+    cdef unsigned int num_orb = orb_symm.shape[0]
+    cdef unsigned int sym_prod = orb_symm[occ.orb1 % num_orb] ^ orb_symm[occ.orb2 % num_orb]
+    cdef unsigned int m_a_allow = _count_doub_virt(occ, orb_symm, n_elec, v_counts, n_symm)
+    if m_a_allow == 0:
+        return occ
+    cdef unsigned int num_symm_pair, xor_row_idx
+    cdef unsigned int symm_idx, n_symm1, n_symm2
+
+    # Get pointer to list to use for enumerating symmetry products
+    if ((occ.spin1 != occ.spin2) or sym_prod == 0):
+        num_symm_pair = n_symm
+        xor_row_idx = 0
+    else:
+        num_symm_pair = n_symm / 2
+        if (sym_prod == 1):
+            xor_row_idx = 1
+        elif (sym_prod == 2 or sym_prod == 3):
+            xor_row_idx = 2
+        else:
+            xor_row_idx = 3
+
+    if sym_prod == 0 and (occ.spin1 == occ.spin2):
+        for symm_idx in range(num_symm_pair):
+            n_symm1 = v_counts[xor_idx[xor_row_idx][symm_idx]][occ.spin1]
+            if n_symm1 > 1:
+                ret_weights[symm_idx] = 1. * n_symm1 / m_a_allow
+                ret_counts[symm_idx] = n_symm1 * (n_symm1 - 1) / 2
+            else:
+                ret_weights[symm_idx] = 0
+        for symm_idx in range(num_symm_pair, n_symm):
+            ret_weights[symm_idx] = 0
+    else:
+        for symm_idx in range(num_symm_pair):
+            n_symm1 = v_counts[xor_idx[xor_row_idx][symm_idx]][occ.spin1]
+            n_symm2 = v_counts[sym_prod ^ xor_idx[xor_row_idx][symm_idx]][occ.spin2]
+            if n_symm1 != 0 and n_symm2 != 0:
+                ret_weights[symm_idx] = 1. * (n_symm1 + n_symm2) / m_a_allow
+                ret_counts[symm_idx] = n_symm1 * n_symm2
+            else:
+                ret_weights[symm_idx] = 0
+        for symm_idx in range(num_symm_pair, n_symm):
+            ret_weights[symm_idx] = 0
+    return occ
 
 
 def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
@@ -478,6 +532,292 @@ def sing_multin(long long[:] dets, unsigned char[:, :] occ_orbs,
     return chosen_orbs, prob_vec, idx_arr
 
 
+def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
+                unsigned char[:] orb_symm, unsigned char[:, :] lookup_tabl,
+                unsigned int[:] num_sampl, unsigned long[:] mt_ptrs,
+                double doub_prob):
+    
+    cdef size_t num_dets = occ_orbs.shape[0]
+    cdef unsigned int num_elec = occ_orbs.shape[1]
+    cdef unsigned int num_orb = orb_symm.shape[0]
+    cdef size_t det_idx
+    cdef unsigned int j
+    cdef unsigned int occ_orb, occ_symm, sample_idx
+    cdef unsigned int elec_idx
+    cdef unsigned int tot_sampl = 0
+    cdef long long curr_det
+    cdef numpy.ndarray[numpy.uint32_t] start_idx = numpy.zeros(num_dets, dtype=numpy.uint32)
+    cdef unsigned int thread_idx
+    cdef unsigned int n_threads = mt_ptrs.shape[0]
+    cdef mt_struct * mts
+    cdef unsigned int[:, :, :] m_allow = numpy.zeros([n_threads, num_elec, 2], dtype=numpy.uint32)
+    cdef unsigned int n_sing_allow, num_allowed
+    cdef unsigned int n_symm = lookup_tabl.shape[0]
+    cdef unsigned int[:, :, :] unocc_sym_counts = numpy.zeros([n_threads, n_symm, 2], dtype=numpy.uint32)
+    cdef unsigned int max_samples = 0
+    cdef orb_pair occ
+
+    cdef unsigned char[4][8] xor_idx
+    xor_idx[0][:] = [0, 1, 2, 3, 4, 5, 6, 7]
+    xor_idx[1][:] = [1, 3, 5, 7, 0, 0, 0, 0]
+    xor_idx[2][:] = [2, 3, 6, 7, 0, 0, 0, 0]
+    xor_idx[3][:] = [4, 5, 6, 7, 0, 0, 0, 0]
+
+    for det_idx in range(num_dets):
+        start_idx[det_idx] = tot_sampl
+        j = num_sampl[det_idx]
+        if j > max_samples:
+            max_samples = j
+        tot_sampl += j
+
+    cdef numpy.ndarray[numpy.uint8_t, ndim=2] doub_orbs = numpy.zeros([tot_sampl, 4],
+                                                                      dtype=numpy.uint8)
+    cdef numpy.ndarray[numpy.uint8_t, ndim=2] sing_orbs = numpy.zeros([tot_sampl, 2],
+                                                                      dtype=numpy.uint8)
+    cdef numpy.ndarray[numpy.float64_t] sing_probs = numpy.zeros(tot_sampl)
+    cdef numpy.ndarray[numpy.uint32_t] sing_det_idx = numpy.zeros(tot_sampl, dtype=numpy.uint32)
+    cdef numpy.ndarray[numpy.float64_t] doub_probs = numpy.zeros(tot_sampl)
+    cdef numpy.ndarray[numpy.uint32_t] doub_det_idx = numpy.zeros(tot_sampl, dtype=numpy.uint32)
+
+    cdef unsigned char[:, :, :, :] samples = numpy.zeros([n_threads, 2, max_samples, 4], dtype=numpy.uint8)
+    cdef double[:, :, :] fri_weights = numpy.zeros([n_threads, 2, max_samples], dtype=numpy.float64)
+    cdef unsigned int[:, :, :] fri_idx = numpy.zeros([n_threads, max_samples, 2], dtype=numpy.uint32)
+    cdef unsigned int[:, :] fri_counts = numpy.zeros([n_threads, max_samples], dtype=numpy.uint32)
+    cdef double[:, :, :] fri_sub_weights = numpy.zeros([n_threads, max_samples, n_symm], dtype=numpy.float64)
+    cdef double[:, :] fri_probs = numpy.zeros([n_threads, max_samples], dtype=numpy.float64)
+    cdef unsigned char[:, :, :] doub_orb_cts = numpy.zeros([n_threads, max_samples, n_symm], dtype=numpy.uint8)
+    cdef unsigned int curr_n_samp, n_sing, n_doub, samp_idx
+    cdef unsigned char *samp_ptr
+    cdef double one_norm
+
+    for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
+    # for det_idx in range(num_dets):
+        if (num_sampl[det_idx] < 2):
+            continue
+        thread_idx = threadid()
+        mts = < mt_struct * > mt_ptrs[thread_idx]
+        curr_det = dets[det_idx]
+        sample_idx = start_idx[det_idx]
+        _count_symm_virt(< unsigned int (*)[2]> &unocc_sym_counts[thread_idx, 0, 0], &occ_orbs[det_idx, 0],
+                         num_elec, lookup_tabl, orb_symm)
+        n_sing_allow = 0  # number of electrons with no symmetry-allowed single excitations
+        for elec_idx in range(num_elec):
+            occ_orb = occ_orbs[det_idx, elec_idx]
+            occ_symm = orb_symm[occ_orb % num_orb]
+            num_allowed = unocc_sym_counts[thread_idx, occ_symm, elec_idx / (num_elec / 2)]
+            if num_allowed > 0:
+                m_allow[thread_idx, n_sing_allow, 0] = occ_orb
+                m_allow[thread_idx, n_sing_allow, 1] = num_allowed
+                n_sing_allow = n_sing_allow + 1
+
+        # select occ orbitals (singles) and occ pairs (doubles)
+        fri_weights[thread_idx, 0, 0] = 1 - doub_prob
+        fri_weights[thread_idx, 0, 1] = doub_prob
+        fri_counts[thread_idx, 0] = n_sing_allow
+        fri_counts[thread_idx, 1] = num_elec * (num_elec - 1) / 2
+        curr_n_samp = fri_subd(&fri_weights[thread_idx, 0, 0], &fri_counts[thread_idx, 0], NULL,
+                               2, 0, 0, < unsigned int (*)[2] > &fri_idx[thread_idx, 0, 0],
+                               &fri_weights[thread_idx, 1, 0], num_sampl[det_idx], < mt_struct * > mts)
+        # curr_n_samp = fri_subd(fri_weights[thread_idx, 0, :], fri_counts[thread_idx, :], fri_sub_weights[thread_idx, :, :],
+        #                         2, 0, 0, fri_idx[thread_idx, :, :], fri_weights[thread_idx, 1, :], num_sampl[det_idx], mt_ptrs[thread_idx])
+
+        # select unocc (singles) and symm pairs (doubles)
+        n_sing = 0
+        for samp_idx in range(curr_n_samp):
+            if fri_idx[thread_idx, samp_idx, 0] == 0: # single
+                elec_idx = fri_idx[thread_idx, samp_idx, 1]
+                # samples[thread_idx, 0, n_sing, 0] = m_allow[thread_idx, elec_idx, 0] # orbital
+                samples[thread_idx, 0, n_sing, 0] = elec_idx
+                fri_counts[thread_idx, n_sing] = m_allow[thread_idx, elec_idx, 1] # num unocc
+                fri_weights[thread_idx, 0, n_sing] = fri_weights[thread_idx, 1, samp_idx]
+                n_sing = n_sing + 1
+        n_doub = 0
+        for samp_idx in range(curr_n_samp):
+            if fri_idx[thread_idx, samp_idx, 0] == 1: # double
+                elec_idx = fri_idx[thread_idx, samp_idx, 1]
+                occ = _symm_pair_wt(&occ_orbs[det_idx, 0], num_elec, elec_idx,
+                                    orb_symm, < unsigned int (*)[2] > &unocc_sym_counts[thread_idx, 0, 0], xor_idx, n_symm, 
+                                    &fri_sub_weights[thread_idx, n_sing + n_doub, 0], &doub_orb_cts[thread_idx, n_sing + n_doub, 0])
+                samples[thread_idx, 0, n_sing + n_doub, 0] = occ.orb2
+                samples[thread_idx, 0, n_sing + n_doub, 1] = occ.orb1
+                fri_weights[thread_idx, 0, n_sing + n_doub] = fri_weights[thread_idx, 1, samp_idx]
+                n_doub = n_doub + 1
+
+        curr_n_samp = fri_subd(&fri_weights[thread_idx, 0, 0], &fri_counts[thread_idx, 0], &fri_sub_weights[thread_idx, n_sing, 0],
+                               n_sing, n_doub, n_symm, < unsigned int (*)[2] > &fri_idx[thread_idx, 0, 0], &fri_weights[thread_idx, 1, 0],
+                               num_sampl[det_idx], < mt_struct * > mts)
+        # curr_n_samp = fri_subd(fri_weights[thread_idx, 0, :], fri_counts[thread_idx, :], fri_sub_weights[thread_idx, n_sing:, :],
+        #                         n_sing, n_doub, n_symm, fri_idx[thread_idx, :, :], fri_weights[thread_idx, 1, :], num_sampl[det_idx], mt_ptrs[thread_idx])
+
+        # select virtual orbital pair (doubles)
+        samp_idx = 0
+        j = fri_idx[thread_idx, samp_idx, 0]
+        while j < n_sing and samp_idx < curr_n_samp: # singles
+            samples[thread_idx, 1, samp_idx, 0] = samples[thread_idx, 0, j, 0]
+            samples[thread_idx, 1, samp_idx, 1] = fri_idx[thread_idx, samp_idx, 1]
+            fri_counts[thread_idx, samp_idx] = 1
+            samp_idx = samp_idx + 1
+            j = fri_idx[thread_idx, samp_idx, 0]
+        n_sing = samp_idx
+        while samp_idx < curr_n_samp:
+            j = fri_idx[thread_idx, samp_idx, 0]
+            samples[thread_idx, 1, samp_idx, 0] = samples[thread_idx, 0, j, 0]
+            samples[thread_idx, 1, samp_idx, 1] = samples[thread_idx, 0, j, 1]
+            samples[thread_idx, 1, samp_idx, 2] = fri_idx[thread_idx, samp_idx, 1]
+            n_sing_allow = doub_orb_cts[thread_idx, j, fri_idx[thread_idx, samp_idx, 1]]
+            fri_counts[thread_idx, samp_idx] = n_sing_allow
+            fri_probs[thread_idx, samp_idx] = fri_sub_weights[thread_idx, j, fri_idx[thread_idx, samp_idx, 1]]
+            samp_idx = samp_idx + 1
+
+        curr_n_samp = fri_subd(&fri_weights[thread_idx, 1, 0], &fri_counts[thread_idx, 0], NULL,
+                               curr_n_samp, 0, 0, < unsigned int (*)[2] > &fri_idx[thread_idx, 0, 0], &fri_weights[thread_idx, 0, 0],
+                               num_sampl[det_idx], < mt_struct * > mt_ptrs[thread_idx])
+        # curr_n_samp = fri_subd(fri_weights[thread_idx, 1, :], fri_counts[thread_idx, :], fri_sub_weights[thread_idx, :, :], 
+        #                        curr_n_samp, 0, 0, fri_idx[thread_idx, :, :], fri_weights[thread_idx, 0, :], 
+        #                        num_sampl[det_idx], mt_ptrs[thread_idx])
+
+        n_doub = 0
+        for samp_idx in range(curr_n_samp):
+            j = fri_idx[thread_idx, samp_idx, 0]
+            if j < n_sing:
+                sing_det_idx[sample_idx + samp_idx - n_doub] = det_idx
+                occ_orb = m_allow[thread_idx, samples[thread_idx, 1, j, 0], 0]
+                sing_orbs[sample_idx + samp_idx - n_doub, 0] = occ_orb
+                occ_symm = orb_symm[occ_orb % num_orb]
+                samp_ptr = &samples[thread_idx, 0, 0, 0]
+                _list_virt_symm(curr_det, &lookup_tabl[occ_symm, 0], (occ_orb / num_orb) * num_orb, samp_ptr)
+                sing_orbs[sample_idx + samp_idx - n_doub, 1] = samp_ptr[fri_idx[thread_idx, samp_idx, 1]]
+                sing_probs[sample_idx + samp_idx - n_doub] = ((1 - doub_prob) / n_sing_allow / 
+                                                              m_allow[thread_idx, samples[thread_idx, 1, j, 0], 1] / 
+                                                              fri_weights[thread_idx, 0, samp_idx])
+            else:
+                doub_det_idx[sample_idx + n_doub] = det_idx
+                doub_orbs[sample_idx + n_doub, 0] = samples[thread_idx, 1, j, 0]
+                doub_orbs[sample_idx + n_doub, 1] = samples[thread_idx, 1, j, 1]
+                _find_symm_virt(curr_det, lookup_tabl, &orb_symm[0], &doub_orbs[sample_idx + n_doub, 0],
+                                samples[thread_idx, 1, j, 2], fri_idx[thread_idx, samp_idx, 1],
+                                < unsigned int (*)[2]> &unocc_sym_counts[thread_idx, 0, 0], num_orb, 
+                                &doub_orbs[sample_idx + n_doub, 2], xor_idx)
+                doub_probs[sample_idx + n_doub] = (doub_prob * 2 / num_elec / (num_elec - 1) * fri_probs[thread_idx, j]
+                                                    / fri_counts[thread_idx, j] / fri_weights[thread_idx, 0, samp_idx])
+                n_doub = n_doub + 1
+
+    doub_non_null = doub_probs > 0
+    sing_non_null = sing_probs > 0
+
+    return doub_orbs[doub_non_null], doub_probs[doub_non_null], doub_det_idx[doub_non_null], sing_orbs[sing_non_null], sing_probs[sing_non_null], sing_det_idx[sing_non_null]
+
+
+# def fri_subd_wrap(double[:] weights, unsigned int[:] counts, double[:, :] sub_weights,
+#                 unsigned int n_samp, unsigned long mt):
+#     cdef numpy.ndarray[numpy.uint32_t, ndim=2] new_idx = numpy.zeros([n_samp, 2], dtype=numpy.uint32)
+#     cdef numpy.ndarray[numpy.float64_t] new_weights =  numpy.zeros(n_samp, dtype=numpy.float64)
+#     cdef unsigned int new_n_samp = fri_subd(&weights[0], &counts[0], &sub_weights[0,0],
+#                                 counts.shape[0], sub_weights.shape[0], sub_weights.shape[1],
+#                                 &new_idx[0, 0], &new_weights[0], n_samp, < mt_struct * > mt)
+#     new_idx = new_idx[:new_n_samp]
+#     new_weights = new_weights[:new_n_samp]
+#     return new_idx, new_weights
+
+
+cdef unsigned int fri_subd(double *weights, unsigned int *num_div, double *sub_weights, 
+                           size_t n_ct, size_t n_wt, size_t n_subwt, unsigned int new_idx[][2],
+                           double *new_weights, unsigned int n_samp, mt_struct *mt_ptr) nogil:
+# def fri_subd(double[:] weights, unsigned int[:] num_div, double[:,:] sub_weights,
+#         size_t n_ct, size_t n_wt, size_t n_subwt, unsigned int[:,:] new_idx,
+#         double[:] new_weights, unsigned int n_samp, unsigned long mt):
+    # weights and sub_weights are modified in this function
+    cdef double one_norm = 1
+    cdef size_t wt_idx, subwt_idx
+    cdef size_t front_samp_idx = 0
+    cdef size_t back_samp_idx = n_samp
+    cdef size_t local_n_samp = n_samp
+    cdef int any_kept = 1
+    cdef double curr_weight, curr_subwt
+    cdef double rand_num, sub_rand
+
+    while any_kept and fabs(one_norm) > 1e-10: # Decide which to preserve exactly
+        any_kept = 0
+        for wt_idx in range(n_ct):
+            curr_weight = weights[wt_idx] / num_div[wt_idx]
+            if curr_weight >= one_norm / local_n_samp:
+                for subwt_idx in range(num_div[wt_idx]):
+                    new_idx[front_samp_idx][0] = wt_idx
+                    new_idx[front_samp_idx][1] = subwt_idx
+                    new_weights[front_samp_idx] = curr_weight
+                    front_samp_idx += 1
+                local_n_samp -= num_div[wt_idx]
+                one_norm -= weights[wt_idx]
+                weights[wt_idx] = 0
+                any_kept = 1
+                break
+        # for wt_idx in range(n_wt):
+        wt_idx = 0
+        while wt_idx < n_wt and any_kept == 0:
+            for subwt_idx in range(n_subwt):
+                curr_weight = weights[wt_idx + n_ct] * sub_weights[wt_idx * n_subwt + subwt_idx]
+                if curr_weight >= one_norm / local_n_samp:
+                    new_idx[back_samp_idx - 1][0] =  wt_idx + n_ct
+                    new_idx[back_samp_idx - 1][1] = subwt_idx
+                    new_weights[back_samp_idx - 1] = curr_weight
+                    back_samp_idx -= 1
+                    local_n_samp -= 1
+                    one_norm -= curr_weight
+                    sub_weights[wt_idx * n_subwt + subwt_idx] = 0
+                    any_kept = 1
+                    break
+            wt_idx = wt_idx + 1
+    # renormalize sub_weights
+    one_norm = 0
+    for wt_idx in range(n_ct):
+        one_norm += weights[wt_idx]
+    for wt_idx in range(n_wt):
+        curr_weight = 0
+        for subwt_idx in range(n_subwt):
+            curr_weight += sub_weights[wt_idx * n_subwt + subwt_idx]
+        weights[wt_idx + n_ct] *= curr_weight
+        one_norm += weights[wt_idx + n_ct]
+        for subwt_idx in range(n_subwt):
+            sub_weights[wt_idx * n_subwt + subwt_idx] /= curr_weight
+
+    # Systematic resampling
+    if fabs(one_norm) > 1e-10:
+        rand_num = genrand_mt(mt_ptr) / RAND_MAX * one_norm / local_n_samp
+        wt_idx = 1
+        curr_weight = weights[0]
+        while rand_num < one_norm:
+            while curr_weight < rand_num:
+                curr_weight += weights[wt_idx]
+                wt_idx += 1
+            wt_idx -= 1
+            new_idx[front_samp_idx][0] = wt_idx
+            sub_rand = (rand_num - curr_weight + weights[wt_idx]) / weights[wt_idx]
+
+            if wt_idx < n_ct:
+                new_idx[front_samp_idx][1] = < unsigned int > (sub_rand * num_div[wt_idx])
+            else:
+                curr_subwt = sub_weights[(wt_idx - n_ct) * n_subwt]
+                subwt_idx = 1
+                while curr_subwt < sub_rand:
+                    curr_subwt += sub_weights[(wt_idx - n_ct) * n_subwt + subwt_idx]
+                    subwt_idx += 1
+                new_idx[front_samp_idx][1] = subwt_idx - 1
+            new_weights[front_samp_idx] = one_norm / local_n_samp
+            front_samp_idx += 1
+            rand_num += one_norm /  local_n_samp
+            wt_idx += 1
+    if back_samp_idx > front_samp_idx:
+        while back_samp_idx < n_samp:
+            new_idx[front_samp_idx][0] = new_idx[back_samp_idx][0]
+            new_idx[front_samp_idx][1] = new_idx[back_samp_idx][1]
+            new_weights[front_samp_idx] = new_weights[back_samp_idx]
+            front_samp_idx += 1
+            back_samp_idx += 1
+        return front_samp_idx
+    else:
+        return n_samp
+
+
 cdef unsigned int _sing_choose_occ(unsigned int[:] counts, mt_struct *mt_ptr
                                    ) nogil:
     # Choose an occupied orbital with a nonzero number of symmetry-allowed
@@ -546,56 +886,107 @@ def id_doub_virt(long long[:] dets, unsigned char[:, :] lookup_tabl,
     xor_idx[2][:] = [2, 3, 6, 7, 0, 0, 0, 0]
     xor_idx[3][:] = [4, 5, 6, 7, 0, 0, 0, 0]
     cdef unsigned int symm_prod, occ_same, spin1, spin2, occ_orb1, occ_orb2
-    cdef unsigned int xor_row_idx, v1, v2, spin_a, spin_b
+    cdef unsigned int xor_row_idx, num_symm_pair, v1, v2, spin_a, spin_b
     cdef unsigned char symm1, symm2
 
     for det_idx in range(num_dets):
         curr_det = dets[det_idx]
-        occ_orb1 = occ_pairs[det_idx, 1]
-        occ_orb2 = occ_pairs[det_idx, 0]
-        spin1 = occ_orb1 / n_orb
-        spin2 = occ_orb2 / n_orb
-        symm_prod = orb_symm[occ_orb1 % n_orb] ^ orb_symm[occ_orb2 % n_orb]
-        occ_same = symm_prod == 0 and (spin1 == spin2)
+        _find_symm_virt(curr_det, lookup_tabl, &orb_symm[0], &occ_pairs[det_idx, 0],
+                        irrep_idx[det_idx], virt_idx[det_idx], 
+                        < unsigned int (*)[2] > &virt_counts[det_idx, 0, 0], n_orb, 
+                        & virt_orbs[det_idx, 0], xor_idx)
+        # occ_orb1 = occ_pairs[det_idx, 1]
+        # occ_orb2 = occ_pairs[det_idx, 0]
+        # spin1 = occ_orb1 / n_orb
+        # spin2 = occ_orb2 / n_orb
+        # symm_prod = orb_symm[occ_orb1 % n_orb] ^ orb_symm[occ_orb2 % n_orb]
+        # occ_same = symm_prod == 0 and (spin1 == spin2)
 
-        if ((spin1 != spin2) or symm_prod == 0):
-            num_symm_pair = n_symm
-            xor_row_idx = 0
-        else:
-            num_symm_pair = n_symm / 2
-            if (symm_prod == 1):
-                xor_row_idx = 1
-            elif (symm_prod == 2 or symm_prod == 3):
-                xor_row_idx = 2
-            else:
-                xor_row_idx = 3
+        # if ((spin1 != spin2) or symm_prod == 0):
+        #     num_symm_pair = n_symm
+        #     xor_row_idx = 0
+        # else:
+        #     num_symm_pair = n_symm / 2
+        #     if (symm_prod == 1):
+        #         xor_row_idx = 1
+        #     elif (symm_prod == 2 or symm_prod == 3):
+        #         xor_row_idx = 2
+        #     else:
+        #         xor_row_idx = 3
 
-        symm1 = xor_idx[xor_row_idx][irrep_idx[det_idx]]
-        symm2 = symm_prod ^ symm1
+        # symm1 = xor_idx[xor_row_idx][irrep_idx[det_idx]]
+        # symm2 = symm_prod ^ symm1
 
-        if occ_same:
-            v1 = <unsigned int > ((sqrt(virt_idx[det_idx] * 8. + 1) - 1) / 2)
-            v2 = <unsigned int > (virt_idx[det_idx] - v1 * (v1 + 1.) / 2)
-            v1 += 1  # v2 < v1
+        # if occ_same:
+        #     v1 = <unsigned int > ((sqrt(virt_idx[det_idx] * 8. + 1) - 1) / 2)
+        #     v2 = <unsigned int > (virt_idx[det_idx] - v1 * (v1 + 1.) / 2)
+        #     v1 += 1  # v2 < v1
 
-            virt_orbs[det_idx, 0] = _find_virt(curr_det, & lookup_tabl[symm1, 1],
-                                               spin1 * n_orb, v1)
-            virt_orbs[det_idx, 1] = _find_virt(curr_det, & lookup_tabl[symm1, 1],
-                                               spin1 * n_orb, v2)
-        else:
-            xor_row_idx = virt_counts[det_idx, symm1, spin1]
-            v1 = virt_idx[det_idx] % xor_row_idx
-            v2 = virt_idx[det_idx] / xor_row_idx
+        #     virt_orbs[det_idx, 0] = _find_virt(curr_det, & lookup_tabl[symm1, 1],
+        #                                        spin1 * n_orb, v1)
+        #     virt_orbs[det_idx, 1] = _find_virt(curr_det, & lookup_tabl[symm1, 1],
+        #                                        spin1 * n_orb, v2)
+        # else:
+        #     xor_row_idx = virt_counts[det_idx, symm1, spin1]
+        #     v1 = virt_idx[det_idx] % xor_row_idx
+        #     v2 = virt_idx[det_idx] / xor_row_idx
 
-            virt_orbs[det_idx, 0] = _find_virt(curr_det, & lookup_tabl[symm1, 1],
-                                               spin1 * n_orb, v1)
-            virt_orbs[det_idx, 1] = _find_virt(curr_det, & lookup_tabl[symm2, 1],
-                                               spin2 * n_orb, v2)
+        #     virt_orbs[det_idx, 0] = _find_virt(curr_det, & lookup_tabl[symm1, 1],
+        #                                        spin1 * n_orb, v1)
+        #     virt_orbs[det_idx, 1] = _find_virt(curr_det, & lookup_tabl[symm2, 1],
+        #                                        spin2 * n_orb, v2)
     return virt_orbs
+
+cdef void _find_symm_virt(long long curr_det, unsigned char[:, :] lookup_tabl, unsigned char *orb_symm,
+                          unsigned char *occ_pair, unsigned int irrep_idx, unsigned int virt_idx,
+                          unsigned int virt_counts[][2], unsigned int n_orb, unsigned char *virt_pair,
+                          unsigned char xor_idx[][8]) nogil:
+    cdef unsigned int n_symm = lookup_tabl.shape[0]
+    cdef unsigned char occ_orb2 = occ_pair[0]
+    cdef unsigned char occ_orb1 = occ_pair[1]
+    cdef unsigned int spin1 = occ_orb1 / n_orb
+    cdef unsigned int spin2 = occ_orb2 / n_orb
+    cdef unsigned int symm_prod = orb_symm[occ_orb1 % n_orb] ^ orb_symm[occ_orb2 % n_orb]
+    cdef unsigned int xor_row_idx, num_symm_pair, v1, v2, spin_a, spin_b
+    cdef unsigned char symm1, symm2
+
+    if ((spin1 != spin2) or symm_prod == 0):
+        num_symm_pair = n_symm
+        xor_row_idx = 0
+    else:
+        num_symm_pair = n_symm / 2
+        if (symm_prod == 1):
+            xor_row_idx = 1
+        elif (symm_prod == 2 or symm_prod == 3):
+            xor_row_idx = 2
+        else:
+            xor_row_idx = 3
+
+    symm1 = xor_idx[xor_row_idx][irrep_idx]
+    symm2 = symm_prod ^ symm1
+
+    if symm_prod == 0 and (spin1 == spin2):
+        v1 = <unsigned int > ((sqrt(virt_idx * 8. + 1) - 1) / 2)
+        v2 = <unsigned int > (virt_idx - v1 * (v1 + 1.) / 2)
+        v1 += 1  # v2 < v1
+
+        virt_pair[0] = _find_virt(curr_det, & lookup_tabl[symm1, 1],
+                                  spin1 * n_orb, v1)
+        virt_pair[1] = _find_virt(curr_det, & lookup_tabl[symm1, 1],
+                                  spin1 * n_orb, v2)
+    else:
+        xor_row_idx = virt_counts[symm1][spin1]
+        v1 = virt_idx % xor_row_idx
+        v2 = virt_idx / xor_row_idx
+
+        virt_pair[0] = _find_virt(curr_det, & lookup_tabl[symm1, 1],
+                                  spin1 * n_orb, v1)
+        virt_pair[1] = _find_virt(curr_det, & lookup_tabl[symm2, 1],
+                                  spin2 * n_orb, v2)
 
 
 cdef unsigned int _find_virt(long long det, unsigned char * symm_row,
-                             unsigned int spin_shift, unsigned int symm_idx):
+                             unsigned int spin_shift, unsigned int symm_idx) nogil:
     # Find the (symm_idx)th virtual orbital in det with a particular symmetry
     cdef unsigned int col_idx = 0
     cdef unsigned int symm_counter = 0
@@ -643,15 +1034,27 @@ def virt_symm_idx(long long[:] dets, unsigned char[:, :] lookup_tabl,
 
     for det_idx in range(num_dets):
         curr_symm = chosen_symm[det_idx]
-        curr_det = dets[det_idx]
         curr_shift = spin_shifts[det_idx]
-        symm_counter = 0
-        for symm_idx in range(lookup_tabl[curr_symm, 0]):
-            orbital = curr_shift + lookup_tabl[curr_symm, symm_idx + 1]
-            if not(curr_det & (< long long > 1 << orbital)):
-                virt_orbs[det_idx, symm_counter] = orbital
-                symm_counter += 1
+        _list_virt_symm(dets[det_idx], &lookup_tabl[curr_symm, 0], curr_shift, &virt_orbs[det_idx, 0])
+        # curr_det = dets[det_idx]
+        # symm_counter = 0
+        # for symm_idx in range(lookup_tabl[curr_symm, 0]):
+        #     orbital = curr_shift + lookup_tabl[curr_symm, symm_idx + 1]
+        #     if not(curr_det & (< long long > 1 << orbital)):
+        #         virt_orbs[det_idx, symm_counter] = orbital
+        #         symm_counter += 1
     return virt_orbs
+
+cdef void _list_virt_symm(long long curr_det, unsigned char *lookup_row,
+                          unsigned char spin_shift, unsigned char *virt_orbs) nogil:
+    cdef unsigned int symm_counter = 0
+    cdef unsigned int symm_idx
+    cdef unsigned char orbital
+    for symm_idx in range(lookup_row[0]):
+        orbital = spin_shift + lookup_row[symm_idx + 1]
+        if not(curr_det & (< long long > 1 << orbital)):
+            virt_orbs[symm_counter] = orbital
+            symm_counter += 1
 
 
 def virt_symm_bool(long long[:] dets, unsigned char[:, :] lookup_tabl,

@@ -7,6 +7,84 @@ Near-Uniform distribution.
 import numpy
 import compress_utils
 import near_uniform
+import fci_c_utils
+
+
+def cmp_hier_strat(sol_vec, n_sample, p_doub, occ_orb,
+                   orb_symm, symm_lookup, hf_num, rngen_ptrs):
+    vec_weights = numpy.abs(sol_vec.values)
+    one_norm = vec_weights.sum()
+    kept_sing_orb = numpy.empty([0, 2], dtype=numpy.uint8)
+    kept_doub_orb = numpy.empty([0, 4], dtype=numpy.uint8)
+    kept_sing_idx = numpy.empty(0, dtype=numpy.uint32)
+    kept_doub_idx = numpy.empty(0, dtype=numpy.uint32)
+
+    num_nonz = vec_weights.shape[0]
+
+    max_idx = 0
+    target_n_col = (n_sample - num_nonz) * vec_weights[max_idx] / one_norm
+    all_col_doub, det_idx = fci_c_utils.all_doub_ex(sol_vec.indices[0:1], occ_orb[0:1], orb_symm)
+    all_col_sing = numpy.empty([0, 2], dtype=numpy.uint8)
+    n_col = hf_num
+
+    while target_n_col + 1 > n_col and one_norm > 1e-10:
+        kept_sing_orb = numpy.append(kept_sing_orb, all_col_sing, axis=0)
+        kept_doub_orb = numpy.append(kept_doub_orb, all_col_doub, axis=0)
+        kept_sing_idx = numpy.append(kept_sing_idx, numpy.full(all_col_sing.shape[0], max_idx, dtype=numpy.uint32))
+        kept_doub_idx = numpy.append(kept_doub_idx, numpy.full(all_col_doub.shape[0], max_idx, dtype=numpy.uint32))
+
+        one_norm -= vec_weights[max_idx]
+        n_sample -= n_col
+        vec_weights[max_idx] = 0
+        num_nonz -= 1
+
+        max_idx = numpy.argmax(vec_weights)
+        target_n_col = (n_sample - num_nonz) * vec_weights[max_idx] / one_norm
+        curr_det = sol_vec.indices[max_idx:(max_idx + 1)]
+        curr_occ = occ_orb[max_idx:(max_idx + 1)]
+        all_col_doub, det_idx = fci_c_utils.all_doub_ex(curr_det, curr_occ, orb_symm)
+        n_col = det_idx.shape[0]
+        all_col_sing, det_idx = fci_c_utils.all_sing_ex(curr_det, curr_occ, orb_symm)
+        n_col += det_idx.shape[0]
+
+    doub_probs = numpy.ones(kept_doub_orb.shape[0])
+    sing_probs = numpy.ones(kept_sing_orb.shape[0])
+
+    if one_norm > 1e-10:
+        n_col, = compress_utils.sys_resample(vec_weights / one_norm, n_sample - num_nonz, ret_counts=True)
+        n_col[vec_weights != 0] += 1
+    else:
+        return kept_doub_orb, doub_probs, kept_doub_idx, kept_sing_orb, sing_probs, kept_sing_idx
+
+    single_col = n_col == 1
+    single_counts = numpy.zeros_like(sol_vec.indices, dtype=numpy.uint32)
+    single_counts[single_col] = 1
+    n_col[single_col] = 0
+    single_sing, single_doub = near_uniform.bin_n_sing_doub(single_counts, p_doub)
+
+    one_doub_orb, one_doub_prob, one_doub_idx = near_uniform.doub_multin(
+                sol_vec.indices, occ_orb, orb_symm, symm_lookup, single_doub, rngen_ptrs)
+    one_sing_orb, one_sing_prob, one_sing_idx = near_uniform.sing_multin(
+                sol_vec.indices, occ_orb, orb_symm, symm_lookup, single_sing, rngen_ptrs)
+
+    doub_orb = numpy.append(kept_doub_orb, one_doub_orb, axis=0)
+    doub_probs = numpy.append(doub_probs, one_doub_prob)
+    doub_idx = numpy.append(kept_doub_idx, one_doub_idx)
+    sing_orb = numpy.append(kept_sing_orb, one_sing_orb, axis=0)
+    sing_probs = numpy.append(sing_probs, one_sing_prob)
+    sing_idx = numpy.append(kept_sing_idx, one_sing_idx)
+
+    fri_doub_orb, fri_doub_probs, fri_doub_idx, fri_sing_orb, fri_sing_probs, fri_sing_idx = near_uniform.fri_parallel(sol_vec.indices, occ_orb,
+                orb_symm, symm_lookup, n_col, rngen_ptrs, p_doub)
+
+    doub_orb = numpy.append(doub_orb, fri_doub_orb, axis=0)
+    doub_probs = numpy.append(doub_probs, fri_doub_probs)
+    doub_idx = numpy.append(doub_idx, fri_doub_idx)
+    sing_orb = numpy.append(sing_orb, fri_sing_orb, axis=0)
+    sing_probs = numpy.append(sing_probs, fri_sing_probs)
+    sing_idx = numpy.append(sing_idx, fri_sing_idx)
+
+    return doub_orb, doub_probs, doub_idx, sing_orb, sing_probs, sing_idx
 
 
 def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
@@ -57,7 +135,6 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
     # First layer of compression: singles vs. doubles
     sing_doub = numpy.array([[1 - p_doub], [p_doub]])
     num_dets = sol_vec.values.shape[0]
-    # vec_reweights = (1 + numpy.abs(sol_vec.values) * (n_sample - num_dets)) / n_sample
     vec_reweights = numpy.abs(sol_vec.values)
     new_weights = sing_doub * vec_reweights
     new_weights.shape = -1  # singles first, then doubles
