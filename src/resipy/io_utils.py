@@ -92,14 +92,6 @@ def calc_ray_quo(r_dict, sol_vec, occ_orbs, symm, iter_num, diag_el, h_core, eri
     r_dict['ray_num'][1][res_idx] = numer2
 
 
-def check_ray_quo(sol_vec, occ_orbs, symm, diag_el, h_core, eris, n_frozen):
-    self_overlap = numpy.linalg.norm(sol_vec.values)**2
-    off_diag = fci_c_utils.ray_off_diag(sol_vec.indices, sol_vec.values.astype(numpy.float64), occ_orbs,
-                                        h_core, eris, n_frozen, symm)
-    num_diag = numpy.sum(diag_el * sol_vec.values**2)
-    return num_diag, off_diag, self_overlap
-
-
 def calc_results(r_dict, vec, shift, iter_num, hf_col):
     """Estimate the correlation energy from the current iterate and write results
         to file, if necessary.
