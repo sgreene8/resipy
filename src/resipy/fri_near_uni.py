@@ -23,6 +23,7 @@ def cmp_hier_strat(sol_vec, n_sample, p_doub, occ_orb,
 
     max_idx = 0
     target_n_col = (n_sample - num_nonz) * vec_weights[max_idx] / one_norm
+    # target_n_col = n_sample * vec_weights[max_idx] / one_norm
     all_col_doub, det_idx = fci_c_utils.all_doub_ex(sol_vec.indices[0:1], occ_orb[0:1], orb_symm)
     all_col_sing = numpy.empty([0, 2], dtype=numpy.uint8)
     n_col = hf_num
@@ -40,6 +41,7 @@ def cmp_hier_strat(sol_vec, n_sample, p_doub, occ_orb,
 
         max_idx = numpy.argmax(vec_weights)
         target_n_col = (n_sample - num_nonz) * vec_weights[max_idx] / one_norm
+        # target_n_col = n_sample * vec_weights[max_idx] / one_norm
         curr_det = sol_vec.indices[max_idx:(max_idx + 1)]
         curr_occ = occ_orb[max_idx:(max_idx + 1)]
         all_col_doub, det_idx = fci_c_utils.all_doub_ex(curr_det, curr_occ, orb_symm)
@@ -50,8 +52,10 @@ def cmp_hier_strat(sol_vec, n_sample, p_doub, occ_orb,
     doub_probs = numpy.ones(kept_doub_orb.shape[0])
     sing_probs = numpy.ones(kept_sing_orb.shape[0])
 
+    one_norm = vec_weights.sum()
     if one_norm > 1e-10:
         n_col, = compress_utils.sys_resample(vec_weights / one_norm, n_sample - num_nonz, ret_counts=True)
+        # n_col, = compress_utils.sys_resample(vec_weights / one_norm, n_sample, ret_counts=True)
         n_col[vec_weights != 0] += 1
     else:
         return kept_doub_orb, doub_probs, kept_doub_idx, kept_sing_orb, sing_probs, kept_sing_idx
@@ -60,12 +64,14 @@ def cmp_hier_strat(sol_vec, n_sample, p_doub, occ_orb,
     single_counts = numpy.zeros_like(sol_vec.indices, dtype=numpy.uint32)
     single_counts[single_col] = 1
     n_col[single_col] = 0
-    single_sing, single_doub = near_uniform.bin_n_sing_doub(single_counts, p_doub)
+    single_doub, single_sing = near_uniform.bin_n_sing_doub(single_counts, p_doub)
 
     one_doub_orb, one_doub_prob, one_doub_idx = near_uniform.doub_multin(
                 sol_vec.indices, occ_orb, orb_symm, symm_lookup, single_doub, rngen_ptrs)
+    one_doub_prob *= p_doub
     one_sing_orb, one_sing_prob, one_sing_idx = near_uniform.sing_multin(
                 sol_vec.indices, occ_orb, orb_symm, symm_lookup, single_sing, rngen_ptrs)
+    one_sing_prob *= (1 - p_doub)
 
     doub_orb = numpy.append(kept_doub_orb, one_doub_orb, axis=0)
     doub_probs = numpy.append(doub_probs, one_doub_prob)

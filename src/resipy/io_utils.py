@@ -9,7 +9,7 @@ from resipy import misc_c_utils
 import sys
 
 
-def setup_results(buf_len, res_dir, ray_int, fciqmc, shift_int):
+def setup_results(buf_len, res_dir, ray_int, shift_int, samp_mode):
     """Initialize the file handles for writing results and their corresponding
         buffer arrays.
 
@@ -28,9 +28,13 @@ def setup_results(buf_len, res_dir, ray_int, fciqmc, shift_int):
     shift_int : (unsigned int)
         The number of iterations between updates
         to the energy shift.
+    samp_mode: (str)
+        The method by which the Hamiltonian matrix is compressed ('fciqmc', 'multinomial',
+        'fri', 'fri_strat', or 'all'). If 'fciqmc', the number of walkers and sparsity will
+        be saved. If 'all', the number of matrix evalauations will be saved.
     """
     r_dict = {}
-    if fciqmc:
+    if samp_mode == 'fciqmc':
         r_dict['n_walk'] = [open(res_dir + 'N.txt', 'ab', 0),
                             numpy.zeros(buf_len / shift_int, dtype=numpy.int32)]
         r_dict['sparsity'] = [open(res_dir + 'sparsity.txt', 'ab', 0),
@@ -41,6 +45,9 @@ def setup_results(buf_len, res_dir, ray_int, fciqmc, shift_int):
                              numpy.zeros(buf_len / ray_int)]
         r_dict['ray_den'] = [open(res_dir + 'rayden.txt', 'ab', 0),
                          numpy.zeros(buf_len / ray_int)]
+    if samp_mode  == 'all':
+        r_dict['mat_eval'] = [open(res_dir + 'mat_eval.txt', 'ab', 0),
+                              numpy.zeros(buf_len, dtype=numpy.uint32)]
 
     r_dict['shift'] = [open(res_dir + 'S.txt', 'ab', 0),
                        numpy.zeros(buf_len / shift_int)]
@@ -87,12 +94,20 @@ def calc_ray_quo(r_dict, sol_vec, occ_orbs, symm, iter_num, diag_el, h_core, eri
     self_overlap = numpy.linalg.norm(sol_vec.values)**2
     r_dict['ray_den'][1][res_idx] = self_overlap
 
-    numer2 = fci_c_utils.ray_off_diag(sol_vec.indices, sol_vec.values.astype(numpy.float64), occ_orbs,
-                                      h_core, eris, n_frozen, symm) + numpy.sum(diag_el * sol_vec.values**2)
-    r_dict['ray_num'][1][res_idx] = numer2
+    numer = fci_c_utils.ray_off_diag(sol_vec.indices, sol_vec.values.astype(numpy.float64), occ_orbs,
+                                     h_core, eris, n_frozen, symm) + numpy.sum(diag_el * sol_vec.values**2)
+    r_dict['ray_num'][1][res_idx] = numer
 
 
-def calc_results(r_dict, vec, shift, iter_num, hf_col):
+def check_ray_quo(sol_vec, occ_orbs, symm, diag_el, h_core, eris, n_frozen):
+    self_overlap = numpy.linalg.norm(sol_vec.values)**2
+    off_diag, num = fci_c_utils.ray_off_diag(sol_vec.indices, sol_vec.values.astype(numpy.float64), occ_orbs,
+                                        h_core, eris, n_frozen, symm)
+    num_diag = numpy.sum(diag_el * sol_vec.values**2)
+    return num_diag, off_diag, self_overlap, num
+
+
+def calc_results(r_dict, vec, shift, iter_num, hf_col, mat_eval=0):
     """Estimate the correlation energy from the current iterate and write results
         to file, if necessary.
 
@@ -109,6 +124,8 @@ def calc_results(r_dict, vec, shift, iter_num, hf_col):
         index of the current iteration in the trajectory
     hf_col : (SparseVector)
         HF column of the FCI matrix, including the HF determinant itself
+    mat_eval : (unsigned int)
+        Number of off-diagonal Hamiltonian matrix elements sampled in most recent iteration.
     """
     buf_len = r_dict['buf_len']
     res_idx = iter_num % buf_len
@@ -129,6 +146,9 @@ def calc_results(r_dict, vec, shift, iter_num, hf_col):
         if 'sparsity' in r_dict:
             r_dict['sparsity'][1][res_idx / shift_int] = vec.indices.shape[0]
 
+    if 'mat_eval' in r_dict:
+        r_dict['mat_eval'][1][res_idx] = mat_eval
+
     if ((iter_num + 1) % buf_len) == 0:
         sys.stdout.flush()
         numpy.savetxt(r_dict['proj_num'][0], r_dict['proj_num'][1])
@@ -144,6 +164,8 @@ def calc_results(r_dict, vec, shift, iter_num, hf_col):
             numpy.savetxt(r_dict['ray_num'][0], r_dict['ray_num'][1])
         if 'ray_den' in r_dict:
             numpy.savetxt(r_dict['ray_den'][0], r_dict['ray_den'][1])
+        if 'mat_eval' in r_dict:
+            numpy.savetxt(r_dict['mat_eval'][0], r_dict['mat_eval'][1])
 
 
 def read_in_hf(hf_path, n_frozen):

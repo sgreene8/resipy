@@ -213,6 +213,7 @@ def ray_off_diag(long long[:] dets, double[:] values, unsigned char[:, :] occ_or
     cdef unsigned int n_perm
     cdef int search_idx, excite_sign
     cdef double matr_el, ray_num = 0
+    cdef unsigned int num_found = 0
 
     for row_det_idx in prange(n_dets - 1, nogil=True, schedule=static, num_threads=n_threads):
         thread_idx = threadid()
@@ -233,7 +234,7 @@ def ray_off_diag(long long[:] dets, double[:] values, unsigned char[:, :] occ_or
                     excite_sign = 1
                 else:
                     excite_sign = -1
-                ray_num += values[row_det_idx] * matr_el * values[search_idx + row_det_idx + 1] * 2 * excite_sign
+                ray_num += values[row_det_idx] * (matr_el) * values[search_idx + row_det_idx + 1] * 2 * excite_sign
         for ex_idx in range(n_doub):
             search_det = curr_det ^ (< long long > 1 << doub_ex[thread_idx, ex_idx, 0])
             search_det = search_det ^ (< long long > 1 << doub_ex[thread_idx, ex_idx, 1])
@@ -373,6 +374,17 @@ def excite_signs(unsigned char[:] cre_ops, unsigned char[:] des_ops, long long[:
         else:
             signs[det_idx] = -1
     return signs
+
+
+def bit_counts(long long[:] bit_str):
+    cdef size_t num = bit_str.shape[0]
+    cdef size_t idx
+    cdef numpy.ndarray[numpy.uint8_t] cts = numpy.zeros(num, dtype=numpy.uint8)
+
+    for idx in range(num):
+        cts[idx] =  bits_between(bit_str[idx], 63, 0)
+        cts[idx] += bit_str[idx] & 1
+    return cts
 
 
 cdef unsigned int bits_between(long long bit_str, unsigned char a, unsigned char b) nogil:

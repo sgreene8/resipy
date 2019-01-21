@@ -13,7 +13,6 @@ from resipy import compress_utils
 from resipy import io_utils
 from resipy import near_uniform
 
-
 def main():
     args = _parse_args()
     _describe_args(args)
@@ -32,7 +31,10 @@ def main():
         ini_idx = numpy.load(args.restart + 'vec_idx.npy')
         ini_val = numpy.load(args.restart + 'vec_val.npy').astype(numpy.float64)
         en_shift = numpy.genfromtxt(args.restart + 'S.txt')[-1]
-        last_norm = numpy.abs(ini_val).sum()
+        cmp_idx, cmp_vals = compress_utils.fri_1D(ini_val, args.sparsity)
+        ini_idx = ini_idx[cmp_idx]
+        ini_val = cmp_vals
+        last_norm = numpy.abs(cmp_vals).sum()
     else:
         ini_idx = numpy.array([hf_det], dtype=numpy.int64)
         ini_val = numpy.array([1.])
@@ -46,7 +48,7 @@ def main():
                                          byte_nums, byte_idx)
 
     results = io_utils.setup_results(args.result_int, args.result_dir,
-                                     args.rayleigh, False, args.interval)
+                                     args.rayleigh, args.interval, args.sampl_mode)
 
     if args.sampl_mode != "all":
         n_doub_ref = fci_utils.count_doubex(occ_orbs[0], symm, symm_lookup)
@@ -67,6 +69,7 @@ def main():
         hf_det, occ_orbs[0], n_orb, symm, eris, args.frozen)
 
     for iterat in range(args.max_iter):
+        mat_eval = 0
         if args.sampl_mode == "all":
             # Choose all double excitations
             doub_orbs, doub_idx = fci_c_utils.all_doub_ex(
@@ -77,8 +80,7 @@ def main():
                 sol_vec.indices, occ_orbs, symm)
             sing_probs = numpy.ones_like(sing_idx, dtype=numpy.float64)
 
-            print('number of off-diagonal matrix evaluations:')
-            print(doub_probs.shape[0] + sing_probs.shape[0])
+            mat_eval = doub_probs.shape[0] + sing_probs.shape[0]
             
         elif args.sampl_mode == "multinomial":
             n_col, = compress_utils.sys_resample(numpy.abs(sol_vec.values) / one_norm, args.H_sample - sol_vec.values.shape[0], ret_counts=True)
@@ -162,7 +164,7 @@ def main():
         if args.rayleigh != 0 and (iterat + 1) % args.rayleigh == 0:
             io_utils.calc_ray_quo(results, sol_vec, occ_orbs, symm, iterat, diag_matrel, h_core, eris, args.frozen)
 
-        io_utils.calc_results(results, next_vec, en_shift, iterat, hf_col)
+        io_utils.calc_results(results, next_vec, en_shift, iterat, hf_col, mat_eval)
 
         cmp_idx, cmp_vals = compress_utils.fri_1D(next_vec.values, args.sparsity)
         cmp_dets = next_vec.indices[cmp_idx]

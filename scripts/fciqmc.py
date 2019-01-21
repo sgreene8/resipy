@@ -45,7 +45,7 @@ def main():
                                          byte_nums, byte_idx)
 
     results = io_utils.setup_results(args.result_int, args.result_dir,
-                                     args.rayleigh, True, args.interval)
+                                     args.rayleigh, args.interval, 'fciqmc')
 
     n_doub_ref = fci_utils.count_doubex(occ_orbs[0], symm, symm_lookup)
     n_sing_ref = fci_utils.count_singex(
