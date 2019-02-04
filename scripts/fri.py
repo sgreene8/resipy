@@ -26,6 +26,9 @@ def main():
     n_orb = symm.shape[0]
     hf_det = fci_utils.gen_hf_bitstring(n_orb, args.n_elec - args.frozen)
 
+    rngen_ptrs = near_uniform.initialize_mt(args.procs)
+    numpy.random.seed(1)
+
     # Initialize solution vector
     if args.restart:
         ini_idx = numpy.load(args.restart + 'vec_idx.npy')
@@ -61,8 +64,6 @@ def main():
         occ1_probs, occ2_probs, exch_probs = heat_bath.set_up(args.frozen, eris)
     if (args.sampl_mode == "fri" or args.sampl_mode == "fri_strat") and args.dist == "near_uniform":
         from resipy import fri_near_uni
-
-    rngen_ptrs = near_uniform.initialize_mt(args.procs)
 
     # Elements in the HF column of FCI matrix
     hf_col = fci_utils.gen_hf_ex(

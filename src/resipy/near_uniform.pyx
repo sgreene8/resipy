@@ -521,6 +521,7 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
     cdef unsigned int[:, :, :] unocc_sym_counts = numpy.zeros([n_threads, n_symm, 2], dtype=numpy.uint32)
     cdef unsigned int max_samples = 0
     cdef orb_pair occ
+    cdef double loc_p_doub
 
     cdef unsigned char[4][8] xor_idx
     xor_idx[0][:] = [0, 1, 2, 3, 4, 5, 6, 7]
@@ -553,10 +554,9 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
     cdef unsigned char[:, :, :] doub_orb_cts = numpy.zeros([n_threads, max_samples, n_symm], dtype=numpy.uint8)
     cdef unsigned int curr_n_samp, n_sing, n_doub, samp_idx
     cdef unsigned char *samp_ptr
-    cdef double one_norm
 
-    for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
-    # for det_idx in range(num_dets):
+    #for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
+    for det_idx in range(num_dets):
         if (num_sampl[det_idx] < 2):
             continue
         thread_idx = threadid()
@@ -576,9 +576,14 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
                 n_sing_allow = n_sing_allow + 1
 
         # select occ orbitals (singles) and occ pairs (doubles)
-        fri_weights[thread_idx, 0, 0] = 1 - doub_prob
-        fri_weights[thread_idx, 0, 1] = doub_prob
-        fri_counts[thread_idx, 0] = n_sing_allow
+        if n_sing_allow > 0:
+            loc_p_doub = doub_prob
+            fri_counts[thread_idx, 0] = n_sing_allow
+        else:
+            loc_p_doub = 1
+            fri_counts[thread_idx, 0] = 1
+        fri_weights[thread_idx, 0, 0] = 1 - loc_p_doub
+        fri_weights[thread_idx, 0, 1] = loc_p_doub
         fri_counts[thread_idx, 1] = num_elec * (num_elec - 1) / 2
         curr_n_samp = fri_subd(&fri_weights[thread_idx, 0, 0], &fri_counts[thread_idx, 0], NULL,
                                2, 0, 0, < unsigned int (*)[2] > &fri_idx[thread_idx, 0, 0],
@@ -657,7 +662,7 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
                                 samples[thread_idx, 1, j, 2], fri_idx[thread_idx, samp_idx, 1],
                                 < unsigned int (*)[2]> &unocc_sym_counts[thread_idx, 0, 0], num_orb, 
                                 &doub_orbs[sample_idx + n_doub, 2], xor_idx)
-                doub_probs[sample_idx + n_doub] = (doub_prob * 2 / num_elec / (num_elec - 1) * fri_probs[thread_idx, j]
+                doub_probs[sample_idx + n_doub] = (loc_p_doub * 2 / num_elec / (num_elec - 1) * fri_probs[thread_idx, j]
                                                     / fri_counts[thread_idx, j] / fri_weights[thread_idx, 0, samp_idx])
                 n_doub = n_doub + 1
 
@@ -695,7 +700,6 @@ cdef unsigned int fri_subd(double *weights, unsigned int *num_div, double *sub_w
                 weights[wt_idx] = 0
                 any_kept = 1
                 break
-        # for wt_idx in range(n_wt):
         wt_idx = 0
         while wt_idx < n_wt and any_kept == 0:
             for subwt_idx in range(n_subwt):
@@ -721,8 +725,9 @@ cdef unsigned int fri_subd(double *weights, unsigned int *num_div, double *sub_w
             curr_weight += sub_weights[wt_idx * n_subwt + subwt_idx]
         weights[wt_idx + n_ct] *= curr_weight
         one_norm += weights[wt_idx + n_ct]
-        for subwt_idx in range(n_subwt):
-            sub_weights[wt_idx * n_subwt + subwt_idx] /= curr_weight
+        if curr_weight != 0:
+            for subwt_idx in range(n_subwt):
+                sub_weights[wt_idx * n_subwt + subwt_idx] /= curr_weight
 
     # Systematic resampling
     if fabs(one_norm) > 1e-10:
@@ -748,7 +753,7 @@ cdef unsigned int fri_subd(double *weights, unsigned int *num_div, double *sub_w
                 new_idx[front_samp_idx][1] = subwt_idx - 1
             new_weights[front_samp_idx] = one_norm / local_n_samp
             front_samp_idx += 1
-            rand_num += one_norm /  local_n_samp
+            rand_num += one_norm / local_n_samp
             wt_idx += 1
     if back_samp_idx > front_samp_idx:
         while back_samp_idx < n_samp:

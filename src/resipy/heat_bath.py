@@ -291,23 +291,37 @@ def fri_comp(sol_vec, n_nonz, s_tens, d_tens, exch_tens, p_doub, occ_orbs, orb_s
     doub_unocc.sort(axis=1)
     doub_orb = numpy.append(doub_occ, doub_unocc, axis=1)
 
+    probs_sum = occ_doub_probs * unocc_doub_probs # (i,j,a,b)
+    tmp_idx = numpy.arange(probs_sum.shape[0], dtype=numpy.uint32)
+    # Calculate probability of choosing in reverse order
+    dets = sol_vec.indices[doub_det_idx]
+    virt1_wts = _cs_virt_wts(doub_o2, doub_det_idx, exch_tens, occ_orbs)
+    virt2_symm = orb_symm[doub_u1 % n_orb]
+    virt2_wts, nonnull = _cs_symm_wts(doub_u2, doub_o1, virt2_symm, dets, exch_tens, lookup_tabl)
+    probs_sum += doub_alt_probs * virt1_wts[tmp_idx, doub_u2 % n_orb] * virt2_wts[tmp_idx, doub_u1 % n_orb] # (j,i,b,a)
+
+    # Add in probabilities for same-spin
     same_spin = spin_o1 == spin_o2
     new_det_idx = doub_det_idx[same_spin]
     dets = sol_vec.indices[new_det_idx]
+    n_same = dets.shape[0]
+    tmp_idx = tmp_idx[:n_same]
     doub_o1 = doub_o1[same_spin]
     doub_o2 = doub_o2[same_spin]
     doub_u1 = doub_u1[same_spin]
     doub_u2 = doub_u2[same_spin]
-    virt1_wts_rev = _cs_virt_wts(doub_o2, new_det_idx, exch_tens, occ_orbs)
-    virt2_symm = (orb_symm[doub_o1 % n_orb] ^ orb_symm[doub_o2 % n_orb] ^
-                  orb_symm[doub_u2 % n_orb])
-    virt2_wts_rev, nonnull = _cs_symm_wts(doub_u2, doub_o1, virt2_symm, dets, exch_tens, lookup_tabl)
+    virt2_symm = virt2_symm[same_spin]
 
-    tmp_idx = numpy.arange(doub_o2.shape[0], dtype=numpy.uint32)
-    unocc_doub_probs[same_spin] += virt1_wts_rev[tmp_idx, doub_u2 % n_orb] * virt2_wts_rev[tmp_idx, doub_u1 % n_orb]
-    occ_doub_probs += doub_alt_probs
+    virt1_wts = _cs_virt_wts(doub_o1, new_det_idx, exch_tens, occ_orbs)
+    virt2_wts, nonnull = _cs_symm_wts(doub_u2, doub_o2, virt2_symm, dets, exch_tens, lookup_tabl)
+    probs_sum[same_spin] += occ_doub_probs[same_spin] * virt1_wts[tmp_idx, doub_u2 % n_orb] * virt2_wts[tmp_idx, doub_u1 % n_orb] # (i,j,b,a)
 
-    doub_probs = p_doub * occ_doub_probs * unocc_doub_probs * vec_reweights[doub_det_idx] / fri_vals[n_sing:]
+    virt1_wts = _cs_virt_wts(doub_o2, new_det_idx, exch_tens, occ_orbs)
+    virt2_symm = orb_symm[doub_u2 % n_orb]
+    virt2_wts, nonnull = _cs_symm_wts(doub_u1, doub_o1, virt2_symm, dets, exch_tens, lookup_tabl)
+    probs_sum[same_spin] += doub_alt_probs[same_spin] * virt1_wts[tmp_idx, doub_u1 % n_orb] * virt2_wts[tmp_idx, doub_u2 % n_orb] # (j,i,a,b)
+
+    doub_probs = probs_sum * p_doub * vec_reweights[doub_det_idx] / fri_vals[n_sing:]
 
     return doub_orb, doub_probs, doub_det_idx, sing_orb, sing_probs, sing_det_idx
 
@@ -390,25 +404,41 @@ def doub_multin(s_tens, d_tens, exch_tens, dets, occ_orbs, orb_symm, lookup_tabl
     unocc_probs *= virt2_wts[tmp_idx, unocc2_orbs]
 
     doub_unocc.sort(axis=1)
-    sampl_orbs = numpy.append(doub_occ, doub_unocc, axis=1)
 
-    # Calculate probability of choosing orbitals for same-spin excitations in
-    # reverse order
+    probs_sum = occ_probs[:, 0] * unocc_probs #(i,j,a,b)
+    tmp_idx = numpy.arange(probs_sum.shape[0], dtype=numpy.uint32)
+    # Calculate probability of choosing in reverse order
+    virt1_wts = _cs_virt_wts(doub_occ[:, 1], det_idx, exch_tens, occ_orbs)
+    virt2_symm = orb_symm[unocc1_orbs]
+    virt2_wts, nonnull = _cs_symm_wts(unocc2_orbs + spin2, doub_occ[:, 0], virt2_symm, dets[det_idx], exch_tens, lookup_tabl)
+    probs_sum += occ_probs[:, 1] * virt1_wts[tmp_idx, unocc2_orbs] * virt2_wts[tmp_idx, unocc1_orbs] # (j,i,b,a)
+
+    # Add in probabilities for same-spin
     same_spin = spin1 == spin2
     new_det_idx = det_idx[same_spin]
     dets = dets[new_det_idx]
-    doub_occ = doub_occ[same_spin]
+    n_same = dets.shape[0]
+    tmp_idx = tmp_idx[:n_same]
+    same_occ = doub_occ[same_spin]
     unocc1_orbs = unocc1_orbs[same_spin]
     unocc2_orbs = unocc2_orbs[same_spin]
-    virt1_wts_rev = _cs_virt_wts(doub_occ[:, 1], new_det_idx, exch_tens, occ_orbs)
-    virt2_symm = (orb_symm[doub_occ[:, 0] % n_orb] ^ orb_symm[doub_occ[:, 1] % n_orb] ^
-                  orb_symm[unocc2_orbs])
-    virt2_wts_rev, nonnull = _cs_symm_wts(unocc2_orbs + spin2[same_spin], doub_occ[:, 0], virt2_symm, dets, exch_tens, lookup_tabl)
+    spin1 = spin1[same_spin]
+    occ_probs = occ_probs[same_spin]
+    virt2_symm = virt2_symm[same_spin]
 
-    tmp_idx = numpy.arange(doub_occ.shape[0], dtype=numpy.uint32)
-    unocc_probs[same_spin] += virt1_wts_rev[tmp_idx, unocc2_orbs] * virt2_wts_rev[tmp_idx, unocc1_orbs]
+    virt1_wts = _cs_virt_wts(same_occ[:, 0], new_det_idx, exch_tens, occ_orbs)
+    virt2_wts, nonnull = _cs_symm_wts(unocc2_orbs + spin1, same_occ[:, 1], virt2_symm, dets, exch_tens, lookup_tabl)
+    probs_sum[same_spin] += occ_probs[:, 0] * virt1_wts[tmp_idx, unocc2_orbs] * virt2_wts[tmp_idx, unocc1_orbs] # (i,j,b,a)
 
-    return sampl_orbs, unocc_probs * occ_probs, det_idx
+    virt1_wts = _cs_virt_wts(same_occ[:, 1], new_det_idx, exch_tens, occ_orbs)
+    virt2_symm = orb_symm[unocc2_orbs]
+    virt2_wts, nonnull = _cs_symm_wts(unocc1_orbs + spin1, same_occ[:, 0], virt2_symm, dets, exch_tens, lookup_tabl)
+    probs_sum[same_spin] += occ_probs[:, 1] * virt1_wts[tmp_idx, unocc1_orbs] * virt2_wts[tmp_idx, unocc2_orbs] # (j,i,a,b)
+
+    doub_occ.sort(axis=1)
+    sampl_orbs = numpy.append(doub_occ, doub_unocc, axis=1)
+
+    return sampl_orbs, probs_sum, det_idx
 
 
 def _multi_occ_pair(s_tens, d_tens, occ_orbs, n_sampl, idx, mt_ptrs):
@@ -468,6 +498,4 @@ def _multi_occ_pair(s_tens, d_tens, occ_orbs, n_sampl, idx, mt_ptrs):
     chosen_probs[n_hf:, 0] *= o2_probs[tmp_idx, o2_idx]
     chosen_probs[n_hf:, 1] *= d_tens[chosen_orbs[n_hf:, 1], chosen_orbs[n_hf:, 0]] / d_tens[chosen_orbs[n_hf:, 1:2], occ_expand].sum(axis=1)
 
-    chosen_orbs.sort(axis=1)
-
-    return chosen_orbs, chosen_probs.sum(axis=1)
+    return chosen_orbs, chosen_probs
