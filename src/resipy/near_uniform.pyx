@@ -348,11 +348,14 @@ cdef orb_pair _symm_pair_wt(unsigned char *occ_orbs, unsigned int n_elec, unsign
                             unsigned char[:] orb_symm, unsigned int v_counts[][2],
                             unsigned char xor_idx[][8], unsigned int n_symm,
                             double *ret_weights, unsigned char *ret_counts) nogil:
+    # Calculate weights for all pairs of irreps whose symmetry product is equal to that of a pair of specified occupied orbitals
     cdef orb_pair occ = _tri_to_occ_pair(occ_orbs, n_elec, tri_idx)
     cdef unsigned int num_orb = orb_symm.shape[0]
     cdef unsigned int sym_prod = orb_symm[occ.orb1 % num_orb] ^ orb_symm[occ.orb2 % num_orb]
     cdef unsigned int m_a_allow = _count_doub_virt(occ, orb_symm, n_elec, v_counts, n_symm)
     if m_a_allow == 0:
+        occ.orb1 = 0
+        occ.orb2 = 0
         return occ
     cdef unsigned int num_symm_pair, xor_row_idx
     cdef unsigned int symm_idx, n_symm1, n_symm2
@@ -501,7 +504,50 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
                 unsigned char[:] orb_symm, unsigned char[:, :] lookup_tabl,
                 unsigned int[:] num_sampl, unsigned long[:] mt_ptrs,
                 double doub_prob):
-    
+        ''' Compress each column of the near-uniform excitation weight matrix
+            independently using systematic compression.
+
+        Parameters
+        ----------
+        dets : (numpy.ndarray, int64)
+            Bit string representations of all determinants
+        occ_orbs : (numpy.ndarray, uint8)
+            The numbers in each row correspond to the indices of occupied
+                orbitals in each determinant, calculated from fci_c_utils.gen_orb_lists
+        orb_symm : (numpy.ndarray, uint8)
+            irreducible representation of each spatial orbital
+        lookup_tabl : (numpy.ndarray, uint8)
+            Table of orbitals with each type of symmetry, as generated
+            by fci_utils.gen_symm_lookup()
+        num_sampl : (numpy.ndarray, uint32)
+            number of nonzero entries to keep in compression of each column
+        mt_ptrs : (numpy.ndarray, uint64)
+            List of addresses to MT state objects to use for RN generation
+        doub_prob : (double)
+            The probability of choosing a double vs. single excitation from the
+            definition of the near-uniform excitation weight matrix.
+
+        Returns
+        -------
+        (numpy.ndarray, uint8) :
+            chosen occupied (0th and 1st columns) and unoccupied (2nd and 3rd
+            columns) orbitals for each double excitation
+        (numpy.ndarray, float64) :
+            Values of excitation weight matrix elements divided by their
+            compressed values, for double excitations
+        (numpy.ndarray, uint32) :
+            index in the dets array of the origin determinant for each double
+            excitation
+        (numpy.ndarray, uint8) :
+            chosen occupied (0th column) and unoccupied (1st column) orbitals
+            for each single excitation
+        (numpy.ndarray, float64) :
+            Values of excitation weight matrix elements divided by their
+            compressed values, for single excitations
+        (numpy.ndarray, uint32) :
+            index in the dets array of the origin determinant for each single
+            excitation
+        '''
     cdef size_t num_dets = occ_orbs.shape[0]
     cdef unsigned int num_elec = occ_orbs.shape[1]
     cdef unsigned int num_orb = orb_symm.shape[0]
@@ -554,8 +600,10 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
     cdef unsigned char[:, :, :] doub_orb_cts = numpy.zeros([n_threads, max_samples, n_symm], dtype=numpy.uint8)
     cdef unsigned int curr_n_samp, n_sing, n_doub, samp_idx
     cdef unsigned char *samp_ptr
+    cdef int renorm_fri, ret_val
+    cdef double one_norm
 
-    #for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
+    # for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
     for det_idx in range(num_dets):
         if (num_sampl[det_idx] < 2):
             continue
@@ -585,7 +633,7 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
         fri_weights[thread_idx, 0, 0] = 1 - loc_p_doub
         fri_weights[thread_idx, 0, 1] = loc_p_doub
         fri_counts[thread_idx, 1] = num_elec * (num_elec - 1) / 2
-        curr_n_samp = fri_subd(&fri_weights[thread_idx, 0, 0], &fri_counts[thread_idx, 0], NULL,
+        curr_n_samp = _fri_subd(&fri_weights[thread_idx, 0, 0], &fri_counts[thread_idx, 0], NULL,
                                2, 0, 0, < unsigned int (*)[2] > &fri_idx[thread_idx, 0, 0],
                                &fri_weights[thread_idx, 1, 0], num_sampl[det_idx], < mt_struct * > mts)
 
@@ -606,14 +654,33 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
                 occ = _symm_pair_wt(&occ_orbs[det_idx, 0], num_elec, elec_idx,
                                     orb_symm, < unsigned int (*)[2] > &unocc_sym_counts[thread_idx, 0, 0], xor_idx, n_symm, 
                                     &fri_sub_weights[thread_idx, 0, n_sing + n_doub, 0], &doub_orb_cts[thread_idx, n_sing + n_doub, 0])
+                if occ.orb1 == 0 and occ.orb2 == 0:
+                    fri_weights[thread_idx, 0, n_sing + n_doub] = 0
+                    renorm_fri = 1
+                    n_doub = n_doub + 1
+                    continue
+                # if occ.orb1 == 12 and occ.orb2 == 1 and fri_sub_weights[thread_idx, 0, n_sing + n_doub, 0] != 0:
+                #     printf('problem\n')
                 for j in range(n_symm):
                     fri_sub_weights[thread_idx, 1, n_sing + n_doub, j] = fri_sub_weights[thread_idx, 0, n_sing + n_doub, j]
                 samples[thread_idx, 0, n_sing + n_doub, 0] = occ.orb2
                 samples[thread_idx, 0, n_sing + n_doub, 1] = occ.orb1
+                # if occ.orb2 == 1 and occ.orb1 == 12:
+                #     printf('weight is %lf\n', fri_sub_weights[thread_idx, 1, n_sing + n_doub, 0])
+                if occ.orb2 == 1 and occ.orb1 == 12 and fri_sub_weights[thread_idx, 1, n_sing + n_doub, 0] != 0:
+                    printf('problem\n')
                 fri_weights[thread_idx, 0, n_sing + n_doub] = fri_weights[thread_idx, 1, samp_idx]
                 n_doub = n_doub + 1
 
-        curr_n_samp = fri_subd(&fri_weights[thread_idx, 0, 0], &fri_counts[thread_idx, 0], &fri_sub_weights[thread_idx, 0, n_sing, 0],
+        if renorm_fri:
+            renorm_fri = 0
+            one_norm = 0
+            for j in range(n_doub + n_sing):
+                one_norm = one_norm + fri_weights[thread_idx, 0, j]
+            for j in range(n_doub + n_sing):
+                fri_weights[thread_idx, 0, j] = fri_weights[thread_idx, 0, j] / one_norm
+
+        curr_n_samp = _fri_subd(&fri_weights[thread_idx, 0, 0], &fri_counts[thread_idx, 0], &fri_sub_weights[thread_idx, 0, n_sing, 0],
                                n_sing, n_doub, n_symm, < unsigned int (*)[2] > &fri_idx[thread_idx, 0, 0], &fri_weights[thread_idx, 1, 0],
                                num_sampl[det_idx], < mt_struct * > mts)
 
@@ -632,11 +699,13 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
             samples[thread_idx, 1, samp_idx, 0] = samples[thread_idx, 0, j, 0]
             samples[thread_idx, 1, samp_idx, 1] = samples[thread_idx, 0, j, 1]
             samples[thread_idx, 1, samp_idx, 2] = fri_idx[thread_idx, samp_idx, 1]
+            # if samples[thread_idx, 1, samp_idx, 0] == 1 and samples[thread_idx, 1, samp_idx, 1] == 12 and samples[thread_idx, 1, samp_idx, 2] == 0:
+            #     pass
             fri_counts[thread_idx, samp_idx] = doub_orb_cts[thread_idx, j, fri_idx[thread_idx, samp_idx, 1]]
             fri_probs[thread_idx, samp_idx] = fri_sub_weights[thread_idx, 1, j, fri_idx[thread_idx, samp_idx, 1]]
             samp_idx = samp_idx + 1
 
-        curr_n_samp = fri_subd(&fri_weights[thread_idx, 1, 0], &fri_counts[thread_idx, 0], NULL,
+        curr_n_samp = _fri_subd(&fri_weights[thread_idx, 1, 0], &fri_counts[thread_idx, 0], NULL,
                                curr_n_samp, 0, 0, < unsigned int (*)[2] > &fri_idx[thread_idx, 0, 0], &fri_weights[thread_idx, 0, 0],
                                num_sampl[det_idx], < mt_struct * > mt_ptrs[thread_idx])
 
@@ -658,10 +727,12 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
                 doub_det_idx[sample_idx + n_doub] = det_idx
                 doub_orbs[sample_idx + n_doub, 0] = samples[thread_idx, 1, j, 0]
                 doub_orbs[sample_idx + n_doub, 1] = samples[thread_idx, 1, j, 1]
-                _find_symm_virt(curr_det, lookup_tabl, &orb_symm[0], &doub_orbs[sample_idx + n_doub, 0],
+                ret_val = _find_symm_virt(curr_det, lookup_tabl, &orb_symm[0], &doub_orbs[sample_idx + n_doub, 0],
                                 samples[thread_idx, 1, j, 2], fri_idx[thread_idx, samp_idx, 1],
                                 < unsigned int (*)[2]> &unocc_sym_counts[thread_idx, 0, 0], num_orb, 
                                 &doub_orbs[sample_idx + n_doub, 2], xor_idx)
+                if ret_val == -1:
+                    raise ValueError('divide by 0')
                 doub_probs[sample_idx + n_doub] = (loc_p_doub * 2 / num_elec / (num_elec - 1) * fri_probs[thread_idx, j]
                                                     / fri_counts[thread_idx, j] / fri_weights[thread_idx, 0, samp_idx])
                 n_doub = n_doub + 1
@@ -672,9 +743,11 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
     return doub_orbs[doub_non_null], doub_probs[doub_non_null], doub_det_idx[doub_non_null], sing_orbs[sing_non_null], sing_probs[sing_non_null], sing_det_idx[sing_non_null]
 
 
-cdef unsigned int fri_subd(double *weights, unsigned int *num_div, double *sub_weights, 
+cdef unsigned int _fri_subd(double *weights, unsigned int *num_div, double *sub_weights,
                            size_t n_ct, size_t n_wt, size_t n_subwt, unsigned int new_idx[][2],
                            double *new_weights, unsigned int n_samp, mt_struct *mt_ptr) nogil:
+    # perform systematic compression on a vector with elements subdivided further,
+    # either uniformly (into num_div portions) or nonuniformly (as in sub_weights)
     # weights and sub_weights are modified in this function
     cdef double one_norm = 1
     cdef size_t wt_idx, subwt_idx
@@ -846,7 +919,7 @@ def id_doub_virt(long long[:] dets, unsigned char[:, :] lookup_tabl,
                         & virt_orbs[det_idx, 0], xor_idx)
     return virt_orbs
 
-cdef void _find_symm_virt(long long curr_det, unsigned char[:, :] lookup_tabl, unsigned char *orb_symm,
+cdef int _find_symm_virt(long long curr_det, unsigned char[:, :] lookup_tabl, unsigned char *orb_symm,
                           unsigned char *occ_pair, unsigned int irrep_idx, unsigned int virt_idx,
                           unsigned int virt_counts[][2], unsigned int n_orb, unsigned char *virt_pair,
                           unsigned char xor_idx[][8]) nogil:
@@ -885,6 +958,8 @@ cdef void _find_symm_virt(long long curr_det, unsigned char[:, :] lookup_tabl, u
         #                           spin1 * n_orb, v2)
     else:
         xor_row_idx = virt_counts[symm1][spin1]
+        if xor_row_idx == -1:
+            return -1
         v1 = virt_idx % xor_row_idx
         v2 = virt_idx / xor_row_idx
 
@@ -901,6 +976,7 @@ cdef void _find_symm_virt(long long curr_det, unsigned char[:, :] lookup_tabl, u
     else:
         virt_pair[0] = v2
         virt_pair[1] = v1
+    return 0
 
 
 cdef unsigned int _find_virt(long long det, unsigned char * symm_row,
@@ -965,6 +1041,7 @@ def virt_symm_idx(long long[:] dets, unsigned char[:, :] lookup_tabl,
 
 cdef void _list_virt_symm(long long curr_det, unsigned char *lookup_row,
                           unsigned char spin_shift, unsigned char *virt_orbs) nogil:
+    # enumerate virtual orbitals with specified irrep
     cdef unsigned int symm_counter = 0
     cdef unsigned int symm_idx
     cdef unsigned char orbital
@@ -1069,7 +1146,6 @@ cdef unsigned int _count_doub_virt(orb_pair occ, unsigned char[:] orb_irreps,
     # given a chosen pair of occupied orbitals
     cdef unsigned int n_allow
     cdef unsigned int n_orb = orb_irreps.shape[0]
-    # cdef unsigned int n_symm = virt_counts.shape[1]
     cdef unsigned char sym_prod = (orb_irreps[occ.orb1 % n_orb] ^
                                    orb_irreps[occ.orb2 % n_orb])
     cdef int same_symm = sym_prod == 0 and occ.spin1 == occ.spin2

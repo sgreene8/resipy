@@ -13,6 +13,7 @@ from resipy import compress_utils
 from resipy import io_utils
 from resipy import near_uniform
 
+
 def main():
     args = _parse_args()
     _describe_args(args)
@@ -27,7 +28,6 @@ def main():
     hf_det = fci_utils.gen_hf_bitstring(n_orb, args.n_elec - args.frozen)
 
     rngen_ptrs = near_uniform.initialize_mt(args.procs)
-    numpy.random.seed(1)
 
     # Initialize solution vector
     if args.restart:
@@ -82,9 +82,10 @@ def main():
             sing_probs = numpy.ones_like(sing_idx, dtype=numpy.float64)
 
             mat_eval = doub_probs.shape[0] + sing_probs.shape[0]
-            
+
         elif args.sampl_mode == "multinomial":
-            n_col, = compress_utils.sys_resample(numpy.abs(sol_vec.values) / one_norm, args.H_sample - sol_vec.values.shape[0], ret_counts=True)
+            n_col, = compress_utils.sys_resample(numpy.abs(sol_vec.values) / one_norm, args.H_sample -
+                                                 sol_vec.values.shape[0], ret_counts=True)
             n_col += 1
             n_doub_col, n_sing_col = near_uniform.bin_n_sing_doub(
                 n_col, p_doub)
@@ -106,14 +107,16 @@ def main():
         elif args.dist == "near_uniform" and args.sampl_mode == "fri_strat":
             # Compress both excitations
             doub_orbs, doub_probs, doub_idx, sing_orbs, sing_probs, sing_idx = fri_near_uni.cmp_hier_strat(sol_vec, args.H_sample, p_doub,
-                                                                                                     occ_orbs, symm, symm_lookup, num_hf, rngen_ptrs)
+                                                                                                           occ_orbs, symm, symm_lookup,
+                                                                                                           num_hf, rngen_ptrs)
         elif args.dist == "heat-bath_PP" and args.sampl_mode == "multinomial":
             # Sample double excitations
             doub_orbs, doub_probs, doub_idx = heat_bath.doub_multin(
                 occ1_probs, occ2_probs, exch_probs, sol_vec.indices, occ_orbs, symm, symm_lookup, n_doub_col, rngen_ptrs)
             doub_probs *= p_doub * n_col[doub_idx]
         elif args.dist == "heat-bath_PP" and args.sampl_mode == "fri":
-            doub_orbs, doub_probs, doub_idx, sing_orbs, sing_probs, sing_idx = heat_bath.fri_comp(sol_vec, args.H_sample, occ1_probs, occ2_probs, exch_probs, p_doub, occ_orbs, symm, symm_lookup)
+            doub_orbs, doub_probs, doub_idx, sing_orbs, sing_probs, sing_idx = heat_bath.fri_comp(
+                sol_vec, args.H_sample, occ1_probs, occ2_probs, exch_probs, p_doub, occ_orbs, symm, symm_lookup)
 
         doub_matrel = fci_c_utils.doub_matr_el_nosgn(
             doub_orbs, eris, args.frozen)

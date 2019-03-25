@@ -12,6 +12,48 @@ import fci_c_utils
 
 def cmp_hier_strat(sol_vec, n_sample, p_doub, occ_orb,
                    orb_symm, symm_lookup, hf_num, rngen_ptrs):
+    """Perform FRI-type compression on the Near-Uniform distribution,
+        column-by-column, preserving colummns exactly as determined by
+        number of samples vs. number of nonzero elements.
+
+        Parameters
+        ----------
+        sol_vec : (SparseVector object)
+            the current solution vector
+        n_sample : (unsigned int)
+            the desired number of nonzero matrix elements in each column after
+            compression
+        p_doub : (double)
+            the probability of choosing a double excitation vs a single excitation
+        occ_orb : (numpy.ndarray, uint8)
+            The numbers in each row correspond to the indices of occupied
+            orbitals in each determinant, calculated from fci_c_utils.gen_orb_lists
+        orb_symm : (numpy.ndarray, uint8)
+            irreducible representation of each spatial orbital
+        symm_lookup : (numpy.ndarray, uint8)
+            Table of orbitals with each type of symmetry, as generated
+            by fci_utils.gen_byte_table()
+
+        Returns
+        -------
+        (numpy.ndarray, uint8) :
+            chosen occupied (0th and 1st columns) and unoccupied (2nd and 3rd
+            columns) orbitals for double excitations
+        (numpy.ndarray, float64) :
+            probability of selecting each chosen double excitation (weight
+            divided by compressed weight)
+        (numpy.ndarray, uint32) :
+            index of the origin determinant of each chosen double excitation
+            in the dets array
+        (numpy.ndarray, uint8) :
+            chosen occupied (0th column) and unoccupied (1st column)
+            orbitals for single excitations
+        (numpy.ndarray, float64) :
+            probability of selecting each chosen single excitation
+        (numpy.ndarray, uint32) :
+            index of the origin determinant of each chosen single excitation
+            in the dets array
+        """
     vec_weights = numpy.abs(sol_vec.values)
     one_norm = vec_weights.sum()
     kept_sing_orb = numpy.empty([0, 2], dtype=numpy.uint8)
@@ -69,11 +111,11 @@ def cmp_hier_strat(sol_vec, n_sample, p_doub, occ_orb,
     single_doub, single_sing = near_uniform.bin_n_sing_doub(single_counts, p_doub)
 
     one_doub_orb, one_doub_prob, one_doub_idx = near_uniform.doub_multin(
-                sol_vec.indices, occ_orb, orb_symm, symm_lookup, single_doub, rngen_ptrs)
-    one_doub_prob *= p_doub# * single_counts[one_doub_idx]
+        sol_vec.indices, occ_orb, orb_symm, symm_lookup, single_doub, rngen_ptrs)
+    one_doub_prob *= p_doub  # * single_counts[one_doub_idx]
     one_sing_orb, one_sing_prob, one_sing_idx = near_uniform.sing_multin(
-                sol_vec.indices, occ_orb, orb_symm, symm_lookup, single_sing, rngen_ptrs)
-    one_sing_prob *= (1 - p_doub)# * single_counts[one_sing_idx]
+        sol_vec.indices, occ_orb, orb_symm, symm_lookup, single_sing, rngen_ptrs)
+    one_sing_prob *= (1 - p_doub)  # * single_counts[one_sing_idx]
 
     doub_orb = numpy.append(kept_doub_orb, one_doub_orb, axis=0)
     doub_probs = numpy.append(doub_probs, one_doub_prob)
@@ -82,8 +124,10 @@ def cmp_hier_strat(sol_vec, n_sample, p_doub, occ_orb,
     sing_probs = numpy.append(sing_probs, one_sing_prob)
     sing_idx = numpy.append(kept_sing_idx, one_sing_idx)
 
-    fri_doub_orb, fri_doub_probs, fri_doub_idx, fri_sing_orb, fri_sing_probs, fri_sing_idx = near_uniform.fri_parallel(sol_vec.indices, occ_orb,
-                orb_symm, symm_lookup, n_col, rngen_ptrs, p_doub)
+    fri_doub_orb, fri_doub_probs, fri_doub_idx, fri_sing_orb, fri_sing_probs, fri_sing_idx = near_uniform.fri_parallel(sol_vec.indices,
+                                                                                                                       occ_orb, orb_symm,
+                                                                                                                       symm_lookup, n_col,
+                                                                                                                       rngen_ptrs, p_doub)
 
     doub_orb = numpy.append(doub_orb, fri_doub_orb, axis=0)
     doub_probs = numpy.append(doub_probs, fri_doub_probs)
@@ -180,10 +224,14 @@ def cmp_hier(sol_vec, n_sample, p_doub, occ_orb,
     # Third layer of compression: allowed virtual orbitals for singles, symmetry pairs for doubles
     doub_wts, doub_nvirt, doub_occ = near_uniform.symm_pair_wt(symm_virt, occ_orb, orb_symm,
                                                                det_idx[n_sing:], occ_idx[n_sing:])
+    null_doub = numpy.logical_and(doub_occ[:, 0] == 0, doub_occ[:, 1] == 0)
+    null_idx = numpy.nonzero(null_doub)[0]
+    fri_vals[null_idx + n_sing] = 0
 
     fri_idx, fri_vals = compress_utils.fri_subd(fri_vals, virt_allow[det_idx[:n_sing], occ_idx[:n_sing]],
                                                 doub_wts, n_sample)
-    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(fri_idx[:, 0], n_sing, [det_idx, occ_idx], [], [doub_occ, doub_wts, doub_nvirt])
+    all_arrs, sing_arrs, doub_arrs, n_sing = compress_utils.proc_fri_sd_choices(
+        fri_idx[:, 0], n_sing, [det_idx, occ_idx], [], [doub_occ, doub_wts, doub_nvirt])
     det_idx, occ_idx = all_arrs
     doub_occ, doub_wts, doub_nvirt = doub_arrs
     n_doub = doub_occ.shape[0]
