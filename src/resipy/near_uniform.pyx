@@ -504,50 +504,50 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
                 unsigned char[:] orb_symm, unsigned char[:, :] lookup_tabl,
                 unsigned int[:] num_sampl, unsigned long[:] mt_ptrs,
                 double doub_prob):
-        ''' Compress each column of the near-uniform excitation weight matrix
-            independently using systematic compression.
+    ''' Compress each column of the near-uniform excitation weight matrix
+        independently using systematic compression.
 
-        Parameters
-        ----------
-        dets : (numpy.ndarray, int64)
-            Bit string representations of all determinants
-        occ_orbs : (numpy.ndarray, uint8)
-            The numbers in each row correspond to the indices of occupied
-                orbitals in each determinant, calculated from fci_c_utils.gen_orb_lists
-        orb_symm : (numpy.ndarray, uint8)
-            irreducible representation of each spatial orbital
-        lookup_tabl : (numpy.ndarray, uint8)
-            Table of orbitals with each type of symmetry, as generated
-            by fci_utils.gen_symm_lookup()
-        num_sampl : (numpy.ndarray, uint32)
-            number of nonzero entries to keep in compression of each column
-        mt_ptrs : (numpy.ndarray, uint64)
-            List of addresses to MT state objects to use for RN generation
-        doub_prob : (double)
-            The probability of choosing a double vs. single excitation from the
-            definition of the near-uniform excitation weight matrix.
+    Parameters
+    ----------
+    dets : (numpy.ndarray, int64)
+        Bit string representations of all determinants
+    occ_orbs : (numpy.ndarray, uint8)
+        The numbers in each row correspond to the indices of occupied
+            orbitals in each determinant, calculated from fci_c_utils.gen_orb_lists
+    orb_symm : (numpy.ndarray, uint8)
+        irreducible representation of each spatial orbital
+    lookup_tabl : (numpy.ndarray, uint8)
+        Table of orbitals with each type of symmetry, as generated
+        by fci_utils.gen_symm_lookup()
+    num_sampl : (numpy.ndarray, uint32)
+        number of nonzero entries to keep in compression of each column
+    mt_ptrs : (numpy.ndarray, uint64)
+        List of addresses to MT state objects to use for RN generation
+    doub_prob : (double)
+        The probability of choosing a double vs. single excitation from the
+        definition of the near-uniform excitation weight matrix.
 
-        Returns
-        -------
-        (numpy.ndarray, uint8) :
-            chosen occupied (0th and 1st columns) and unoccupied (2nd and 3rd
-            columns) orbitals for each double excitation
-        (numpy.ndarray, float64) :
-            Values of excitation weight matrix elements divided by their
-            compressed values, for double excitations
-        (numpy.ndarray, uint32) :
-            index in the dets array of the origin determinant for each double
-            excitation
-        (numpy.ndarray, uint8) :
-            chosen occupied (0th column) and unoccupied (1st column) orbitals
-            for each single excitation
-        (numpy.ndarray, float64) :
-            Values of excitation weight matrix elements divided by their
-            compressed values, for single excitations
-        (numpy.ndarray, uint32) :
-            index in the dets array of the origin determinant for each single
-            excitation
-        '''
+    Returns
+    -------
+    (numpy.ndarray, uint8) :
+        chosen occupied (0th and 1st columns) and unoccupied (2nd and 3rd
+        columns) orbitals for each double excitation
+    (numpy.ndarray, float64) :
+        Values of excitation weight matrix elements divided by their
+        compressed values, for double excitations
+    (numpy.ndarray, uint32) :
+        index in the dets array of the origin determinant for each double
+        excitation
+    (numpy.ndarray, uint8) :
+        chosen occupied (0th column) and unoccupied (1st column) orbitals
+        for each single excitation
+    (numpy.ndarray, float64) :
+        Values of excitation weight matrix elements divided by their
+        compressed values, for single excitations
+    (numpy.ndarray, uint32) :
+        index in the dets array of the origin determinant for each single
+        excitation
+    '''
     cdef size_t num_dets = occ_orbs.shape[0]
     cdef unsigned int num_elec = occ_orbs.shape[1]
     cdef unsigned int num_orb = orb_symm.shape[0]
@@ -603,7 +603,7 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
     cdef int renorm_fri, ret_val
     cdef double one_norm
 
-    # for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
+    #for det_idx in prange(num_dets, nogil=True, schedule=static, num_threads=n_threads):
     for det_idx in range(num_dets):
         if (num_sampl[det_idx] < 2):
             continue
@@ -659,16 +659,10 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
                     renorm_fri = 1
                     n_doub = n_doub + 1
                     continue
-                # if occ.orb1 == 12 and occ.orb2 == 1 and fri_sub_weights[thread_idx, 0, n_sing + n_doub, 0] != 0:
-                #     printf('problem\n')
                 for j in range(n_symm):
                     fri_sub_weights[thread_idx, 1, n_sing + n_doub, j] = fri_sub_weights[thread_idx, 0, n_sing + n_doub, j]
                 samples[thread_idx, 0, n_sing + n_doub, 0] = occ.orb2
                 samples[thread_idx, 0, n_sing + n_doub, 1] = occ.orb1
-                # if occ.orb2 == 1 and occ.orb1 == 12:
-                #     printf('weight is %lf\n', fri_sub_weights[thread_idx, 1, n_sing + n_doub, 0])
-                if occ.orb2 == 1 and occ.orb1 == 12 and fri_sub_weights[thread_idx, 1, n_sing + n_doub, 0] != 0:
-                    printf('problem\n')
                 fri_weights[thread_idx, 0, n_sing + n_doub] = fri_weights[thread_idx, 1, samp_idx]
                 n_doub = n_doub + 1
 
@@ -699,10 +693,22 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
             samples[thread_idx, 1, samp_idx, 0] = samples[thread_idx, 0, j, 0]
             samples[thread_idx, 1, samp_idx, 1] = samples[thread_idx, 0, j, 1]
             samples[thread_idx, 1, samp_idx, 2] = fri_idx[thread_idx, samp_idx, 1]
-            # if samples[thread_idx, 1, samp_idx, 0] == 1 and samples[thread_idx, 1, samp_idx, 1] == 12 and samples[thread_idx, 1, samp_idx, 2] == 0:
-            #     pass
             fri_counts[thread_idx, samp_idx] = doub_orb_cts[thread_idx, j, fri_idx[thread_idx, samp_idx, 1]]
             fri_probs[thread_idx, samp_idx] = fri_sub_weights[thread_idx, 1, j, fri_idx[thread_idx, samp_idx, 1]]
+            ret_val = _find_symm_virt(curr_det, lookup_tabl, &orb_symm[0], &samples[thread_idx, 1, samp_idx, 0],
+                            samples[thread_idx, 1, samp_idx, 2], 0, < unsigned int (*)[2]> &unocc_sym_counts[thread_idx, 0, 0], num_orb,
+                            &doub_orbs[sample_idx, 2], xor_idx)
+            if ret_val == -1:
+                printf('prob: %lf, fri_value: %lf, old fri: %lf, old sub: %lf, n_samp: %u\n', fri_probs[thread_idx, samp_idx], fri_weights[thread_idx, 1, samp_idx], fri_weights[thread_idx, 0, j], fri_sub_weights[thread_idx, 0, j, fri_idx[thread_idx, samp_idx, 1]], curr_n_samp)
+
+                elec_idx = samples[thread_idx, 1, samp_idx, 1] * (samples[thread_idx, 1, samp_idx, 1] - 1) / 2 + samples[thread_idx, 1, samp_idx, 0]
+                occ = _symm_pair_wt(&occ_orbs[det_idx, 0], num_elec, elec_idx,
+                            orb_symm, < unsigned int (*)[2] > &unocc_sym_counts[thread_idx, 0, 0], xor_idx, n_symm,
+                            &fri_sub_weights[thread_idx, 0, j, 0], &doub_orb_cts[thread_idx, j, 0])
+                if (occ.orb2 != samples[thread_idx, 0, n_sing + n_doub, 0] or occ.orb1 != samples[thread_idx, 0, n_sing + n_doub, 1]):
+                    printf('conversion messed up\n')
+                printf('recalculated weight is: %lf\n', fri_sub_weights[thread_idx, 0, j, fri_idx[thread_idx, samp_idx, 1]])
+                raise ValueError('early div by 0')
             samp_idx = samp_idx + 1
 
         curr_n_samp = _fri_subd(&fri_weights[thread_idx, 1, 0], &fri_counts[thread_idx, 0], NULL,
@@ -732,7 +738,8 @@ def fri_parallel(long long[:] dets, unsigned char[:, :] occ_orbs,
                                 < unsigned int (*)[2]> &unocc_sym_counts[thread_idx, 0, 0], num_orb, 
                                 &doub_orbs[sample_idx + n_doub, 2], xor_idx)
                 if ret_val == -1:
-                    raise ValueError('divide by 0')
+                    printf('det: %ld, occ1: %u, occ2: %u, symm: %u, counts: %u, virt: %u, weight: %lf\n', curr_det, doub_orbs[sample_idx + n_doub, 0], doub_orbs[sample_idx + n_doub, 1], samples[thread_idx, 1, j, 2], fri_counts[thread_idx, j], fri_idx[thread_idx, samp_idx, 1], fri_weights[thread_idx, 0, samp_idx])
+                    raise ValueError('divide by zero')
                 doub_probs[sample_idx + n_doub] = (loc_p_doub * 2 / num_elec / (num_elec - 1) * fri_probs[thread_idx, j]
                                                     / fri_counts[thread_idx, j] / fri_weights[thread_idx, 0, samp_idx])
                 n_doub = n_doub + 1
@@ -820,7 +827,7 @@ cdef unsigned int _fri_subd(double *weights, unsigned int *num_div, double *sub_
             else:
                 curr_subwt = sub_weights[(wt_idx - n_ct) * n_subwt]
                 subwt_idx = 1
-                while curr_subwt < sub_rand:
+                while curr_subwt <= sub_rand:
                     curr_subwt += sub_weights[(wt_idx - n_ct) * n_subwt + subwt_idx]
                     subwt_idx += 1
                 new_idx[front_samp_idx][1] = subwt_idx - 1
@@ -958,7 +965,7 @@ cdef int _find_symm_virt(long long curr_det, unsigned char[:, :] lookup_tabl, un
         #                           spin1 * n_orb, v2)
     else:
         xor_row_idx = virt_counts[symm1][spin1]
-        if xor_row_idx == -1:
+        if xor_row_idx == 0:
             return -1
         v1 = virt_idx % xor_row_idx
         v2 = virt_idx / xor_row_idx

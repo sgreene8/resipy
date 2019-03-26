@@ -84,6 +84,27 @@ def fri_subd(vec, num_div, sub_weights, n_samp):
     return new_idx[:end_idx2], new_vals[:end_idx2]
 
 
+def deterministic(vec, n_nonz):
+    """Calculate the indices of the n_nonz largest-magnitude elementss in vec
+        
+    Parameters
+    ----------
+    vec : (numpy.ndarray)
+        vector to compress
+    n_nonz : (unsigned int)
+        desired number of nonzero entries
+        
+    Returns
+    -------
+    (numpy.ndarray, unsigned int)
+        indices of elements to preserve in compression
+    """
+    weights = numpy.abs(vec)
+    srt_idx = weights.argsort()[::-1]
+    cmp_idx = srt_idx[:n_nonz]
+    return cmp_idx
+
+
 def fri_1D(vec, n_samp):
     """Compress a vector in full (non-sparse format) using the
         FRI scheme, potentially preserving some elements exactly.

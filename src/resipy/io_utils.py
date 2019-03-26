@@ -48,10 +48,10 @@ def setup_results(buf_len, res_dir, ray_int, shift_int, samp_mode):
     if samp_mode  == 'all':
         r_dict['mat_eval'] = [open(res_dir + 'mat_eval.txt', 'ab', 0),
                               numpy.zeros(buf_len, dtype=numpy.uint32)]
-
-    r_dict['shift'] = [open(res_dir + 'S.txt', 'ab', 0),
-                       numpy.zeros(buf_len / shift_int)]
     r_dict['shift_int'] = shift_int
+    if shift_int != 0:
+        r_dict['shift'] = [open(res_dir + 'S.txt', 'ab', 0),
+                           numpy.zeros(buf_len / shift_int)]
     r_dict['proj_num'] = [open(res_dir + 'projnum.txt', 'ab', 0),
                           numpy.zeros(buf_len)]
     r_dict['proj_den'] = [open(res_dir + 'projden.txt', 'ab', 0),
@@ -94,17 +94,9 @@ def calc_ray_quo(r_dict, sol_vec, occ_orbs, symm, iter_num, diag_el, h_core, eri
     self_overlap = numpy.linalg.norm(sol_vec.values)**2
     r_dict['ray_den'][1][res_idx] = self_overlap
 
-    numer = fci_c_utils.ray_off_diag(sol_vec.indices, sol_vec.values.astype(numpy.float64), occ_orbs,
-                                     h_core, eris, n_frozen, symm) + numpy.sum(diag_el * sol_vec.values**2)
-    r_dict['ray_num'][1][res_idx] = numer
-
-
-def check_ray_quo(sol_vec, occ_orbs, symm, diag_el, h_core, eris, n_frozen):
-    self_overlap = numpy.linalg.norm(sol_vec.values)**2
-    off_diag, num = fci_c_utils.ray_off_diag(sol_vec.indices, sol_vec.values.astype(numpy.float64), occ_orbs,
-                                        h_core, eris, n_frozen, symm)
-    num_diag = numpy.sum(diag_el * sol_vec.values**2)
-    return num_diag, off_diag, self_overlap, num
+    numer2 = fci_c_utils.ray_off_diag(sol_vec.indices, sol_vec.values.astype(numpy.float64), occ_orbs,
+                                      h_core, eris, n_frozen, symm) + numpy.sum(diag_el * sol_vec.values**2)
+    r_dict['ray_num'][1][res_idx] = numer2
 
 
 def calc_results(r_dict, vec, shift, iter_num, hf_col, mat_eval=0):
@@ -138,7 +130,7 @@ def calc_results(r_dict, vec, shift, iter_num, hf_col, mat_eval=0):
           [res_idx] / r_dict['proj_den'][1][res_idx])
 
     shift_int = r_dict['shift_int']
-    if ((iter_num + 1) % shift_int) == 0:
+    if shift_int != 0 and ((iter_num + 1) % shift_int) == 0:
         r_dict['shift'][1][res_idx / shift_int] = shift
         if 'n_walk' in r_dict:
             r_dict['n_walk'][1][res_idx /
